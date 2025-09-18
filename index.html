@@ -19,7 +19,7 @@
   #map{position:absolute;inset:0}
   #status{
     position:fixed;left:8px;top:8px;z-index:1000;background:#fff;border:1px solid #e5e7eb;border-radius:12px;
-    padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:760px;
+    padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:820px;
     pointer-events:auto;
   }
   #status .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0}
@@ -43,6 +43,31 @@
   }
   .chips{margin-top:6px}
 
+  /* Rate Control (top-right) */
+  .rate-ctrl{
+    display:flex; align-items:center; gap:6px;
+    background:#fff; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px;
+    box-shadow:0 1px 6px rgba(0,0,0,.08);
+    font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    margin-right:6px; /* gap from geocoder */
+  }
+  .rate-ctrl label{color:#374151; font-size:12px}
+  .rate-ctrl select{font-size:12px; padding:4px 6px; border-radius:8px; border:1px solid #d1d5db; background:#fff}
+
+  /* Make search box wider (1.5×) */
+  .mapboxgl-ctrl-top-right .mapboxgl-ctrl-geocoder {
+    width: 540px;
+    min-width: 540px;
+    max-width: 640px;
+  }
+  @media (max-width: 800px) {
+    .mapboxgl-ctrl-top-right .mapboxgl-ctrl-geocoder {
+      width: 90vw;
+      min-width: 0;
+      max-width: 90vw;
+    }
+  }
+
   /* Toast */
   #toast{
     position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
@@ -61,24 +86,26 @@
 
 <script>
 (() => {
-  // ====== CONFIG ======
+  // ====== CONFIG (defaults; override via config.json) ======
+  let RATES = { "Default": 2.08 };
+  let RATE_PER_KM = 2.08;  // active rate (ex GST)
+  let GST_PERCENT = 0.10;
+  let FREE_KM     = 50;
+
   const MAPBOX_TOKEN = "pk.eyJ1IjoibWVpc3RlcmciLCJhIjoiY21mbWZ3MWljMDFmZzJsb2UyNzlvanhwdiJ9.ABrCTCsLUIcU0R7bXv_GbA";
-  const CSV_URL      = "data.csv";            // file next to this HTML
-  const COUNTRIES    = "AU";                  // geocoder restricted to AU
+  const CSV_URL      = "data.csv"; // must sit next to this file
+  const COUNTRIES    = "AU";
+  const CURRENCY     = "AUD";
 
-  const RATE_PER_KM   = 2.08;                 // ex-GST
-  const GST_FACTOR    = 1.1;
-  const FREE_KM       = 50;
-  const CURRENCY      = "AUD";
-  const AVG_SPEED_KPH = 80;                   // fallback straight-line time
-  const ALT_COUNT     = 3;
-
-  const NEAREST_COLOR = '#2563eb';            // blue
+  const AVG_SPEED_KPH = 80;                 // fallback for straight-line time
+  const ALT_COUNT     = 3;                  // number of alternates
+  const NEAREST_COLOR = '#2563eb';          // blue
   const ALT_COLORS    = ['#f59e0b','#ef4444','#10b981']; // yellow, red, green
 
   const statusEl = document.getElementById('status');
   const toastEl  = document.getElementById('toast');
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
+  const gstFactor = () => 1 + GST_PERCENT;
 
   function showToast(msg='C.C.'){
     if(!toastEl) return;
@@ -86,10 +113,68 @@
     toastEl.classList.add('show');
     setTimeout(()=>toastEl.classList.remove('show'), 2000);
   }
-  // manual test: press T
+  // manual test
   window.addEventListener('keydown', e => { if((e.key||'').toLowerCase()==='t') showToast(); });
 
-  // Helpers
+  async function loadConfig(){
+    try{
+      const res = await fetch('./config.json', {cache:'no-store'});
+      if(!res.ok) return;
+      const cfg = await res.json();
+      if (cfg && typeof cfg === 'object'){
+        if (cfg.rates && typeof cfg.rates === 'object' && Object.keys(cfg.rates).length){
+          RATES = cfg.rates;
+          const first = Object.keys(RATES)[0];
+          RATE_PER_KM = Number(RATES[first]) || RATE_PER_KM;
+        }
+        if (typeof cfg.gst === 'number') GST_PERCENT = cfg.gst;
+        if (typeof cfg.freeKm === 'number') FREE_KM = cfg.freeKm;
+      }
+    }catch(e){
+      console.warn('Config not found or invalid; using defaults.', e);
+    }
+  }
+
+  // ===== Rate control as a Mapbox control (to the left of geocoder) =====
+  function createRateControl(){
+    class RateControl {
+      onAdd(map){
+        this._map = map;
+        const container = document.createElement('div');
+        container.className = 'mapboxgl-ctrl rate-ctrl';
+        const label = document.createElement('label'); label.textContent = 'Rate:';
+        const sel = document.createElement('select');
+        Object.entries(RATES).forEach(([name, val])=>{
+          const opt = document.createElement('option');
+          opt.value = String(val);
+          opt.textContent = `${name} (${Number(val).toFixed(2)}/km ex GST)`;
+          if (Math.abs(Number(val) - RATE_PER_KM) < 1e-9) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener('change', ()=>{
+          RATE_PER_KM = parseFloat(sel.value);
+          refreshCostsFromStored(); // update UI live
+          showToast(`Rate → ${RATE_PER_KM.toFixed(2)}/km ex GST`);
+        });
+        container.appendChild(label);
+        container.appendChild(sel);
+
+        // Place just before geocoder in top-right corner
+        setTimeout(()=>{
+          const corner = document.querySelector('.mapboxgl-ctrl-top-right');
+          const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
+          if(corner && geocoder){ corner.insertBefore(container, geocoder); }
+        },0);
+
+        this._container = container;
+        return container;
+      }
+      onRemove(){ if(this._container?.parentNode) this._container.parentNode.removeChild(this._container); this._map=undefined; }
+    }
+    return new RateControl();
+  }
+
+  // ===== Helpers =====
   const yn  = v => String(v||'').trim().toLowerCase()==='yes' || String(v||'').trim().toLowerCase()==='true';
   const num = v => { if(v==null) return NaN; const s=String(v).trim().replace(/[^\d.\-+eE]/g,''); return parseFloat(s); };
   const money = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY,minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
@@ -169,7 +254,7 @@
     });
   }
 
-  // Get AU state (e.g., AU-VIC -> VIC) from geocoder result
+  // AU state abbreviation from geocoder (e.g., AU-VIC -> VIC)
   function getAUStateAbbrevFromGeocoder(result){
     const parts = (result && result.context) || [];
     const region = parts.find(p => (p.id||'').startsWith('region.'));
@@ -178,19 +263,23 @@
     return null;
   }
 
-  // nearest POR in same state if available; else fallback to absolute nearest
+  // Nearest POR in same state if available; else absolute nearest
   function nearestInStateOrFallback(coord, feats, stateAbbrev){
     const from = turf.point(coord);
-    const sorted = arr => arr.sort((a,b)=>a.km-b.km);
+    const byDist = (a,b)=>a.km-b.km;
+
     const inState = feats
       .filter(f => String(f.properties.State).toUpperCase() === stateAbbrev)
-      .map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})}));
-    if(inState.length) return {feature: sorted(inState)[0].feature, km: sorted(inState)[0].km, usedFallback:false};
-    const all = feats.map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})}));
-    return {feature: sorted(all)[0].feature, km: sorted(all)[0].km, usedFallback:true};
+      .map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})}))
+      .sort(byDist);
+
+    if (inState.length) return {feature: inState[0].feature, km: inState[0].km, usedFallback:false};
+
+    const all = feats.map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})})).sort(byDist);
+    return {feature: all[0].feature, km: all[0].km, usedFallback:true};
   }
 
-  // alternates by straight-line distance
+  // Alternates by straight-line distance
   function alternatesSorted(coord, feats, excludeId){
     const from = turf.point(coord);
     return feats
@@ -200,7 +289,7 @@
       .slice(0, ALT_COUNT);
   }
 
-  // Fit bounds for query + nearest + open alternates
+  // Fit viewport to include query + nearest + any open alternates
   function updateFitBounds(map, queryCoord, nearestCoord, altCoords){
     const b = new mapboxgl.LngLatBounds();
     if(queryCoord) b.extend(queryCoord);
@@ -209,307 +298,342 @@
     if(!b.isEmpty()) map.fitBounds(b,{padding:80,maxZoom:10});
   }
 
+  // Store refs for UI updates
   const altPopups = {};              // layerId => popup
   let nearestPopup = null;
   let queryCoordGlobal = null;
   let nearestCoordGlobal = null;
   const activeAltCoords = new Map(); // layerId -> [lng,lat]
 
+  function refreshCostsFromStored(){
+    // Nearest
+    const km = Number(statusEl?.dataset?.nearestKm || NaN);
+    const within50 = !isNaN(km) && km <= FREE_KM;
+    if(!isNaN(km)){
+      let cost = 0;
+      if(!within50){
+        const chargeable = Math.max(0, km - FREE_KM);
+        cost = chargeable * 2 * RATE_PER_KM * gstFactor();
+      }
+      const costEl = document.getElementById('nearest-cost');
+      if(costEl) costEl.textContent = money(cost);
+    }
+    // Update displayed rate labels
+    document.querySelectorAll('.rate-label').forEach(el=>{
+      el.textContent = `(${money(RATE_PER_KM)} / km ex GST)`;
+    });
+    // Alternates
+    document.querySelectorAll('.alt-cost').forEach(span=>{
+      const akm = Number(span.dataset.km);
+      if(isNaN(akm)) return;
+      const altWithin50 = akm <= FREE_KM;
+      let acost = 0;
+      if(!altWithin50){
+        const chargeable = Math.max(0, akm - FREE_KM);
+        acost = chargeable * 2 * RATE_PER_KM * gstFactor();
+      }
+      span.textContent = money(acost);
+    });
+  }
+
   async function main(){
-    try{
-      setStatus('Initialising map…');
-      mapboxgl.accessToken = MAPBOX_TOKEN;
+    await loadConfig();
 
-      const map = new mapboxgl.Map({
-        container:'map', style:'mapbox://styles/mapbox/streets-v12',
-        center:[144.9631,-37.8136], zoom:6
+    setStatus('Initialising map…');
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+
+    const map = new mapboxgl.Map({
+      container:'map', style:'mapbox://styles/mapbox/streets-v12',
+      center:[144.9631,-37.8136], zoom:6
+    });
+    map.addControl(new mapboxgl.NavigationControl(),'bottom-right');
+
+    // Geocoder control
+    let gc=null;
+    if(window.MapboxGeocoder){
+      gc=new MapboxGeocoder({
+        accessToken: MAPBOX_TOKEN,
+        mapboxgl,
+        marker:false,
+        placeholder:'Search address or postcode…',
+        countries: COUNTRIES
       });
-      map.addControl(new mapboxgl.NavigationControl(),'bottom-right');
+      map.addControl(gc,'top-right');
+    }
 
-      // Geocoder
-      let gc=null;
-      if(window.MapboxGeocoder){
-        gc=new MapboxGeocoder({
-          accessToken: MAPBOX_TOKEN,
-          mapboxgl,
-          marker:false,
-          placeholder:'Search address or postcode…',
-          countries: COUNTRIES
+    // Rate control
+    map.addControl(createRateControl(),'top-right');
+
+    // Load CSV
+    setStatus('Loading <code>data.csv</code>…');
+    const rows = await loadCSV(CSV_URL);
+    if(!rows || !rows.length) throw new Error('data.csv loaded but has 0 rows');
+
+    const feats=[]; let id=1;
+    for(const r of rows){ const f=rowToFeature(r,id++); if(f) feats.push(f); }
+    if(!feats.length) throw new Error('Parsed 0 pins (check Lat/Lng and headers)');
+
+    // Toast on page load only
+    showToast('C.C.');
+
+    function ensurePointLayer(){
+      if(!map.getSource('query-point')){
+        map.addSource('query-point',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+        map.addLayer({id:'query-point',type:'circle',source:'query-point',
+          paint:{'circle-radius':5,'circle-color':'#111827','circle-stroke-color':'#fff','circle-stroke-width':1}});
+      }
+    }
+
+    async function showNearestFrom(coord, stateAbbrev){
+      try{
+        ensurePointLayer();
+
+        // Clear previous
+        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
+        Object.values(altPopups).forEach(p => p.remove());
+        for (const k in altPopups) delete altPopups[k];
+        if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
+        removeAltRoutes(map);
+        activeAltCoords.clear();
+
+        // Query point
+        map.getSource('query-point').setData({
+          type:'FeatureCollection',
+          features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]
         });
-        map.addControl(gc,'top-right');
-      }
+        queryCoordGlobal = coord;
 
-      // Load data
-      setStatus('Loading <code>data.csv</code>…');
-      const rows = await loadCSV(CSV_URL);
-      if(!rows || !rows.length) throw new Error('data.csv loaded but has 0 rows');
+        // Nearest (state-restricted, fallback allowed)
+        const nearestSel = nearestInStateOrFallback(coord, feats, stateAbbrev);
+        const nearest = nearestSel.feature;
+        let slKm = nearestSel.km;
 
-      const feats=[]; let id=1;
-      for(const r of rows){ const f=rowToFeature(r,id++); if(f) feats.push(f); }
-      if(!feats.length) throw new Error('Parsed 0 pins (check Lat/Lng and headers)');
-
-      // show toast once on page load/refresh
-      showToast('C.C.');
-
-      function ensurePointLayer(){
-        if(!map.getSource('query-point')){
-          map.addSource('query-point',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-          map.addLayer({id:'query-point',type:'circle',source:'query-point',
-            paint:{'circle-radius':5,'circle-color':'#111827','circle-stroke-color':'#fff','circle-stroke-width':1}});
+        // Compute route: only call Directions if > 50 km
+        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, mode='straight', routeGeom=null;
+        if(slKm>FREE_KM){
+          try{
+            const r=await getDriving(coord,nearest.geometry.coordinates);
+            km=r.km; mins=r.minutes; mode='driving'; routeGeom=r.geometry;
+          }catch(err){ console.warn('Nearest directions failed; using straight-line',err); }
         }
+        if(!routeGeom){
+          routeGeom={type:'LineString',coordinates:[coord,nearest.geometry.coordinates]};
+        }
+        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
+        nearestCoordGlobal = nearest.geometry.coordinates;
+
+        // Popup on nearest
+        nearestPopup = new mapboxgl.Popup({offset:12, closeOnClick:false})
+          .setLngLat(nearest.geometry.coordinates)
+          .setHTML(buildPopupHTML(nearest.properties))
+          .addTo(map);
+
+        const within50 = km<=FREE_KM;
+        const badgeClass = within50 ? 'ok' : 'warn';
+        const badgeText  = within50 ? 'Within 50 km' : 'Outside 50 km';
+        const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
+
+        // Accommodation pill: only when Outside 50 AND (km >= 250 OR mins >= 150) one-way
+        const accomFlag = (!within50) && (km >= 250 || mins >= 150);
+
+        // Cost (Nearest)
+        let travelCost = 0;
+        if(!within50){
+          const chargeableKm = Math.max(0, km - FREE_KM);
+          travelCost = chargeableKm * 2 * RATE_PER_KM * gstFactor();
+        }
+
+        const p=nearest.properties;
+        const modeLabel = mode==='driving' ? 'road' : 'straight-line';
+        const chipsHTML = serviceChips(p);
+
+        // Alternates (straight-line sorted)
+        const alts = alternatesSorted(coord, feats, nearest.id);
+        const altHtml = alts.map((a, i) => {
+          const pf = a.feature.properties;
+          const altWithin = a.slKm <= FREE_KM;
+          const cls = altWithin ? 'ok':'warn';
+          const txt = altWithin ? 'Within 50 km' : 'Outside 50 km';
+          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
+          return `
+            <details class="alt" data-alt-index="${i}">
+              <summary>
+                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
+                <span class="pill ${cls}">${txt}</span>
+                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
+                <span class="pill warn accom-pill" style="display:none">Accommodation may be required - Check with SDC</span>
+              </summary>
+              <div class="alt-body" style="display:none"></div>
+            </details>
+          `;
+        }).join('');
+
+        // Status panel
+        setStatus(`
+          <div class="row">
+            <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
+            <div class="pill ${badgeClass}">${badgeText}</div>
+            ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
+            ${accomFlag ? `<div class="pill warn">Accommodation may be required - Check with SDC</div>` : ``}
+          </div>
+          <div class="row">
+            <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
+            <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
+            <div class="pill">
+              <b>Travel Charge inc GST:</b> <span id="nearest-cost">${money(travelCost)}</span>
+              <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span>
+            </div>
+          </div>
+          <div class="row"><div><b>Preferred Resource:</b> ${p['Preferred Resource']||'—'}</div></div>
+          <div class="row">${chipsHTML}</div>
+          ${(p.Notes && String(p.Notes).trim())
+            ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
+            : ``}
+          ${altHtml ? `<div class="row" style="margin-top:6px"><b>Alternates:</b></div>${altHtml}` : ''}
+        `);
+
+        // Store nearest km for live rate changes
+        statusEl.dataset.nearestKm = String(km);
+
+        // Attach alternate handlers
+        document.querySelectorAll('details.alt').forEach((el)=>{
+          const idx = Number(el.dataset.altIndex);
+          const alt  = alts[idx];
+          const pf   = alt.feature.properties;
+          const layerId = `route-alt-${idx}`;
+          const color   = ALT_COLORS[idx % ALT_COLORS.length];
+          const lngLat  = alt.feature.geometry.coordinates;
+
+          if(!map.getSource(layerId)){
+            addOrUpdateLine(map, layerId, color, null);
+          }
+
+          el.addEventListener('toggle', async ()=>{
+            const body = el.querySelector('.alt-body');
+
+            if(el.open){
+              if(el.dataset.loaded !== '1'){
+                let akm = alt.slKm;
+                let amins = (akm/AVG_SPEED_KPH)*60;
+                let amode = 'straight';
+                let acost = 0;
+                let ageom = {type:'LineString',coordinates:[coord, lngLat]};
+
+                if(alt.slKm > FREE_KM){
+                  try{
+                    const r = await getDriving(coord, lngLat);
+                    akm = r.km; amins = r.minutes; amode = 'driving';
+                    ageom = r.geometry;
+                  }catch(e){ console.warn('Alt directions failed; using straight-line'); }
+                }
+                if(akm > FREE_KM){
+                  const chargeable = Math.max(0, akm - FREE_KM);
+                  acost = chargeable * 2 * RATE_PER_KM * gstFactor();
+                }
+
+                const altWithin50 = akm <= FREE_KM;
+                const accom = (!altWithin50) && (akm >= 250 || amins >= 150);
+                const pill = el.querySelector('.accom-pill');
+                if(pill) pill.style.display = accom ? 'inline-block' : 'none';
+
+                const chips = serviceChips(pf);
+                body.style.display='block';
+                body.innerHTML = `
+                  <div class="row">
+                    <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
+                    <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
+                    <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
+                  </div>
+                  <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
+                  <div class="row chips">${chips}</div>
+                  ${(pf.Notes && String(pf.Notes).trim())
+                    ? `<div class="row"><div><b>Notes:</b> ${String(pf.Notes).trim()}</div></div>`
+                    : ``}
+                `;
+                el.dataset.loaded='1';
+                el.dataset.geom = JSON.stringify(ageom);
+              }
+
+              const geom = JSON.parse(el.dataset.geom);
+              addOrUpdateLine(map, layerId, color, geom);
+
+              // Open popup on that pin
+              const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
+                .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
+              altPopups[layerId] = popup;
+
+              // Include in viewport
+              activeAltCoords.set(layerId, lngLat);
+              updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
+
+            }else{
+              addOrUpdateLine(map, layerId, color, null);
+              if(altPopups[layerId]){ altPopups[layerId].remove(); delete altPopups[layerId]; }
+              activeAltCoords.delete(layerId);
+              updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
+            }
+          }, {once:false});
+        });
+
+        // Initial fit: query + nearest
+        updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, []);
+      }catch(e){
+        console.error(e);
+        setStatus(`❌ Nearest calc error: ${e.message}`);
       }
+    }
 
-      async function showNearestFrom(coord, stateAbbrev){
-        try{
-          ensurePointLayer();
+    // ===== Map on load: add pins, rings, listeners =====
+    map.on('load', () => {
+      // Pins
+      const fcPins={type:'FeatureCollection',features:feats};
+      map.addSource('pins',{type:'geojson',data:fcPins});
+      map.addLayer({id:'pins',type:'circle',source:'pins',
+        paint:{'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1}});
+      map.on('mouseenter','pins',()=>map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave','pins',()=>map.getCanvas().style.cursor='');
+      map.on('click','pins', e=>{
+        const p=e.features[0].properties;
+        new mapboxgl.Popup({offset:12})
+          .setLngLat(e.features[0].geometry.coordinates)
+          .setHTML(buildPopupHTML(p))
+          .addTo(map);
+      });
 
-          // clear previous
+      // 50 km circles (Circle50 == true/yes)
+      const rings = feats
+        .filter(f => (String(f.properties.Circle50||'').toLowerCase()==='true' || yn(f.properties.Circle50)))
+        .map(f => turf.circle(f.geometry.coordinates, FREE_KM, {steps:64, units:'kilometers'}));
+      map.addSource('rings',{type:'geojson',data:{type:'FeatureCollection',features:rings}});
+      map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
+      map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
+
+      // Fit to all pins initially
+      const b=new mapboxgl.LngLatBounds(); feats.forEach(f=>b.extend(f.geometry.coordinates));
+      if(!b.isEmpty()) map.fitBounds(b,{padding:60});
+      setStatus(`Done. Loaded <b>${feats.length}</b> pins from <code>${CSV_URL}</code>. Use the search box (Australia only) to calculate distance/time/cost.`);
+
+      if(gc){
+        gc.on('result', e => {
+          const center = e?.result?.center;
+          const stateAbbrev = getAUStateAbbrevFromGeocoder(e?.result) || '';
+          if (center) showNearestFrom(center, stateAbbrev);
+        });
+        gc.on('clear', () => {
           addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
           Object.values(altPopups).forEach(p => p.remove());
           for (const k in altPopups) delete altPopups[k];
-          if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
           removeAltRoutes(map);
+          if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
           activeAltCoords.clear();
-
-          // query point
-          map.getSource('query-point').setData({
-            type:'FeatureCollection',
-            features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]
-          });
-          queryCoordGlobal = coord;
-
-          // nearest limited to state (fallback if none)
-          const nearestSel = nearestInStateOrFallback(coord, feats, stateAbbrev);
-          const nearest = nearestSel.feature;
-          let slKm = nearestSel.km;
-
-          // compute route (use road only if >50km)
-          let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, mode='straight', routeGeom=null;
-          if(slKm>FREE_KM){
-            try{
-              const r=await getDriving(coord,nearest.geometry.coordinates);
-              km=r.km; mins=r.minutes; mode='driving'; routeGeom=r.geometry;
-            }catch(err){ console.warn('Nearest directions failed; using straight-line',err); }
-          }
-          if(!routeGeom){
-            routeGeom={type:'LineString',coordinates:[coord,nearest.geometry.coordinates]};
-          }
-          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
-          nearestCoordGlobal = nearest.geometry.coordinates;
-
-          // popup on nearest
-          nearestPopup = new mapboxgl.Popup({offset:12, closeOnClick:false})
-            .setLngLat(nearest.geometry.coordinates)
-            .setHTML(buildPopupHTML(nearest.properties))
-            .addTo(map);
-
-          const within50 = km<=FREE_KM;
-          const badgeClass = within50 ? 'ok' : 'warn';
-          const badgeText  = within50 ? 'Within 50 km' : 'Outside 50 km';
-          const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
-
-          // Accommodation pill: only when Outside 50 km AND (km >= 250 OR mins >= 150) one-way
-          const accomFlag = (!within50) && (km >= 250 || mins >= 150);
-
-          let travelCost = 0;
-          if(!within50){
-            const chargeableKm = Math.max(0, km - FREE_KM);
-            travelCost = chargeableKm * 2 * RATE_PER_KM * GST_FACTOR;
-          }
-
-          const p=nearest.properties;
-          const modeLabel = mode==='driving' ? 'road' : 'straight-line';
-          const chipsHTML = serviceChips(p);
-
-          // alternates (straight-line sort)
-          const alts = alternatesSorted(coord, feats, nearest.id);
-          const altHtml = alts.map((a, i) => {
-            const pf = a.feature.properties;
-            const altWithin = a.slKm <= FREE_KM;
-            const cls = altWithin ? 'ok':'warn';
-            const txt = altWithin ? 'Within 50 km' : 'Outside 50 km';
-            const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
-            return `
-              <details class="alt" data-alt-index="${i}">
-                <summary>
-                  <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
-                  <span class="pill ${cls}">${txt}</span>
-                  ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
-                  <span class="pill warn accom-pill" style="display:none">Accommodation may be required - Check with SDC</span>
-                </summary>
-                <div class="alt-body" style="display:none"></div>
-              </details>
-            `;
-          }).join('');
-
-          // status card
-          setStatus(`
-            <div class="row">
-              <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
-              <div class="pill ${badgeClass}">${badgeText}</div>
-              ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
-              ${accomFlag ? `<div class="pill warn">Accommodation may be required - Check with SDC</div>` : ``}
-            </div>
-            <div class="row">
-              <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
-              <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
-              <div class="pill">
-                <b>Travel Charge inc GST:</b> ${money(travelCost)} 
-                <span class="muted">(${money(RATE_PER_KM)} / km ex GST)</span>
-              </div>
-            </div>
-            <div class="row"><div><b>Preferred Resource:</b> ${p['Preferred Resource']||'—'}</div></div>
-            <div class="row">${chipsHTML}</div>
-            ${(p.Notes && String(p.Notes).trim())
-              ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
-              : ``}
-            ${altHtml ? `<div class="row" style="margin-top:6px"><b>Alternates:</b></div>${altHtml}` : ''}
-          `);
-
-          // attach alt handlers
-          document.querySelectorAll('details.alt').forEach((el)=>{
-            const idx = Number(el.dataset.altIndex);
-            const alt  = alts[idx];
-            const pf   = alt.feature.properties;
-            const layerId = `route-alt-${idx}`;
-            const color   = ALT_COLORS[idx % ALT_COLORS.length];
-            const lngLat  = alt.feature.geometry.coordinates;
-
-            if(!map.getSource(layerId)){
-              addOrUpdateLine(map, layerId, color, null);
-            }
-
-            el.addEventListener('toggle', async ()=>{
-              const body = el.querySelector('.alt-body');
-
-              if(el.open){
-                if(el.dataset.loaded !== '1'){
-                  let akm = alt.slKm;
-                  let amins = (akm/AVG_SPEED_KPH)*60;
-                  let amode = 'straight';
-                  let acost = 0;
-                  let ageom = {type:'LineString',coordinates:[coord, lngLat]};
-
-                  if(alt.slKm > FREE_KM){
-                    try{
-                      const r = await getDriving(coord, lngLat);
-                      akm = r.km; amins = r.minutes; amode = 'driving';
-                      ageom = r.geometry;
-                    }catch(e){ console.warn('Alt directions failed; using straight-line'); }
-                  }
-                  if(akm > FREE_KM){
-                    const chargeable = Math.max(0, akm - FREE_KM);
-                    acost = chargeable * 2 * RATE_PER_KM * GST_FACTOR;
-                  }
-
-                  const altWithin50 = akm <= FREE_KM;
-                  const accom = (!altWithin50) && (akm >= 250 || amins >= 150);
-                  const pill = el.querySelector('.accom-pill');
-                  if(pill) pill.style.display = accom ? 'inline-block' : 'none';
-
-                  const chips = serviceChips(pf);
-                  body.style.display='block';
-                  body.innerHTML = `
-                    <div class="row">
-                      <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
-                      <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
-                      <div class="pill"><b>Travel Charge inc GST:</b> ${money(acost)} <span class="muted">(${money(RATE_PER_KM)} / km ex GST)</span></div>
-                    </div>
-                    <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
-                    <div class="row chips">${chips}</div>
-                    ${(pf.Notes && String(pf.Notes).trim())
-                      ? `<div class="row"><div><b>Notes:</b> ${String(pf.Notes).trim()}</div></div>`
-                      : ``}
-                  `;
-                  el.dataset.loaded='1';
-                  el.dataset.geom = JSON.stringify(ageom);
-                }
-
-                const geom = JSON.parse(el.dataset.geom);
-                addOrUpdateLine(map, layerId, color, geom);
-
-                // open popup on that pin
-                const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
-                  .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
-                altPopups[layerId] = popup;
-
-                // include in viewport
-                activeAltCoords.set(layerId, lngLat);
-                updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
-
-              }else{
-                addOrUpdateLine(map, layerId, color, null);
-                if(altPopups[layerId]){ altPopups[layerId].remove(); delete altPopups[layerId]; }
-                activeAltCoords.delete(layerId);
-                updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
-              }
-            }, {once:false});
-          });
-
-          // Initial fit: query + nearest
-          updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, []);
-        }catch(e){
-          console.error(e);
-          setStatus(`❌ Nearest calc error: ${e.message}`);
-        }
-      }
-
-      // Map on load: add pins, rings, listeners
-      map.on('load', () => {
-        // Pins
-        const fcPins={type:'FeatureCollection',features:feats};
-        map.addSource('pins',{type:'geojson',data:fcPins});
-        map.addLayer({id:'pins',type:'circle',source:'pins',
-          paint:{'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1}});
-        map.on('mouseenter','pins',()=>map.getCanvas().style.cursor='pointer');
-        map.on('mouseleave','pins',()=>map.getCanvas().style.cursor='');
-        map.on('click','pins', e=>{
-          const p=e.features[0].properties;
-          new mapboxgl.Popup({offset:12})
-            .setLngLat(e.features[0].geometry.coordinates)
-            .setHTML(buildPopupHTML(p))
-            .addTo(map);
+          if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
+          setStatus('Cleared.');
         });
-
-        // 50km circles
-        const rings = feats
-          .filter(f => (String(f.properties.Circle50||'').toLowerCase()==='true' || yn(f.properties.Circle50)))
-          .map(f => turf.circle(f.geometry.coordinates, FREE_KM, {steps:64, units:'kilometers'}));
-        map.addSource('rings',{type:'geojson',data:{type:'FeatureCollection',features:rings}});
-        map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
-        map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
-
-        // Fit to all pins initially
-        const b=new mapboxgl.LngLatBounds(); feats.forEach(f=>b.extend(f.geometry.coordinates));
-        if(!b.isEmpty()) map.fitBounds(b,{padding:60});
-        setStatus(`Done. Loaded <b>${feats.length}</b> pins from <code>${CSV_URL}</code>. Use the search box (Australia only) to calculate distance/time/cost.`);
-
-        if(gc){
-          gc.on('result', e => {
-            const center = e?.result?.center;
-            const stateAbbrev = getAUStateAbbrevFromGeocoder(e?.result) || '';
-            if (center) showNearestFrom(center, stateAbbrev);
-          });
-          gc.on('clear', () => {
-            addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
-            Object.values(altPopups).forEach(p => p.remove());
-            for (const k in altPopups) delete altPopups[k];
-            if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
-            removeAltRoutes(map);
-            activeAltCoords.clear();
-            if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
-            setStatus('Cleared.');
-          });
-        }
-      });
-
-    }catch(e){
-      console.error(e);
-      setStatus(`❌ Fatal error: ${e.message}<br>Check that <code>${CSV_URL}</code> exists next to this file.`);
-    }
+      }
+    });
   }
 
-  main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
+  main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}<br>Check that <code>${CSV_URL}</code> exists next to this file.`); });
 })();
 </script>
 </body>
