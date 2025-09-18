@@ -1,5 +1,8 @@
 {
-  "ratePerKm": 2.08,
+  "rates": {
+    "Default": 2.08,
+    "Premium": 3.10
+  },
   "gst": 0.10,
   "freeKm": 50
 }
