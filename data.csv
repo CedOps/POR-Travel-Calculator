@@ -1,0 +1,40 @@
+POR,Preferred Resource,Lat,Lng,State,Category,CCTV,Alarm,Access Control,Install,Service,Single Tech only,Phone,Email,Notes,Circle50
+Melbourne,ADT,-37.8136,144.9631,VIC,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Bendigo,Bendigo Security - Lisa Lohse,-36.757,144.2794,VIC,Subcontractor,YES,YES,YES,YES,YES,NO,(03)54440154,office@bendigosecurity.com.au,All systems,TRUE
+Shepparton,Insight Protection - Mark Liversidge,-36.3805,145.399,VIC,Subcontractor,YES,YES,YES,YES,YES,NO,(03)58212677,service@insightprotection.com.au,Has NSW Licence and will travel to NSW. Will also work along VIC/NSW Border.,TRUE
+Mildura,Sunraysia Security - Sam,-34.1855,142.1625,VIC,Subcontractor,YES,YES,NO,YES,YES,NO,(03)50213888,sam@sunraysiasecurity.com.au; admin@sunraysiasecurity.com.au,LIMITED SKILLSET - must check with SDC if not NEO/Qol/SYB/Hik. Limitted Travel: Alternate Resource: Insight Protection (Shepparton). No SA Licence.,TRUE
+Mulgrave,ADT,-37.9187,145.1588,VIC,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Sydney,ADT,-33.8727,151.2057,NSW,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Rydalmere,ADT,-33.8123,151.0418,NSW,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Orange,Central West Alarms - Greg Jepson,-33.2816,149.0862,NSW,Subcontractor,YES,YES,YES,YES,YES,NO,0409222800,greg@centralwestalarms.com,,TRUE
+Perth,ADT,-31.9514,115.8617,WA,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Coffs Harbour,North Coast Electrical - Anthony Gauci,-30.2962,153.1139,NSW,Subcontractor,YES,YES,YES,YES,YES,NO,0400040101,nces@mail.com; anthony.gauci@bigpond.com,,TRUE
+Mount Gambier,ISM Security  - Ian McInerny,-37.8244,140.7838,SA,Subcontractor,YES,YES,YES,YES,YES,NO,0419823047,ian@ismsecurity.com.au,Also has VIC Licence and will travel across to VIC,TRUE
+Adelaide,ADT,-34.9285,138.6007,SA,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
+Karratha,Comtec Data Pty Ltd (Karratha),-20.7337,116.8447,WA,Subcontractor,YES,YES,YES,YES,YES,NO,1300466866,admin@comtecdata.com.au; projects@comtecdata.com.au,,TRUE
+Port Hedland,Comtec Data Pty Ltd (Port Hedland),-20.3111,118.6094,WA,Subcontractor,YES,YES,YES,YES,YES,NO,1300466866,admin@comtecdata.com.au; projects@comtecdata.com.au,,TRUE
+Wagga Wagga,Arico Security - Dan Arico,-35.1026,147.3655,NSW,Subcontractor,YES,YES,YES,YES,YES,NO,0429124282,dan.arico@icloud.com,,TRUE
+Kalgoorlie,KB Security,-30.749,121.466,WA,Subcontractor,YES,YES,YES,YES,YES,NO,(08)90224648,service@kbsec.com.au; admin@kbsec.com.au,,TRUE
+Geraldton,Mitchell and Brown Communications Pty Ltd,-28.7761,114.6113,WA,Subcontractor,YES,YES,YES,YES,YES,NO,(08)99640400,security@mbcom.com.au; purchasing@mbcom.com.au,,TRUE
+Broome,Optic Security Group WA (Broome),-17.9618,122.237,WA,Subcontractor,YES,YES,YES,YES,YES,YES,1300729872,service.broome@opticsecuritygroup.com,,TRUE
+Alice Springs,Optic Security Group NT (Alice Springs),-23.698,133.8807,NT,Subcontractor,YES,YES,YES,YES,YES,YES,1300729872,service.alice@opticsecuritygroup.com,,TRUE
+Darwin,Optic Security Group NT (Darwin),-12.4637,130.8444,NT,Subcontractor,YES,YES,YES,YES,YES,NO,1300729872,service.darwin@opticsecuritygroup.com,,TRUE
+Bundaberg,Questryl Security,-24.8661,152.3489,QLD,Subcontractor,YES,YES,YES,YES,YES,YES,0417714722,questryl@bigpond.com,,TRUE
+Cairns,Ruswin Security (Cairns),-16.9203,145.771,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Emerald,Ruswin Security (Emerald),-23.5243,148.1583,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Gladstone,Ruswin Security (Gladstone),-23.8416,151.2498,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Mackay,Ruswin Security (Mackay),-21.1434,149.1868,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Mount Isa,Ruswin Security (Mount Isa),-20.7264,139.493,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Rockhampton,Ruswin Security (Rockhampton),-23.3786,150.5089,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Townsville,Ruswin Security (Townsville),-19.2599,146.8137,QLD,Subcontractor,YES,YES,YES,YES,YES,NO,(07)47208900,info@ruswin.com.au,,TRUE
+Port Lincoln,Shield Security Systems EP - Andrew Woolford,-34.7302,135.8505,SA,Subcontractor,YES,YES,YES,YES,YES,NO,(08)86821155,manager.ep@getyourshield.com.au,,TRUE
+Bunbury,Southen Lock and Security,-33.327,115.6408,WA,Subcontractor,YES,YES,YES,YES,YES,NO,(08)97218200,bill@southernlock.com.au,,TRUE
+Port Augusta,Spencer Gulf Security,-32.4936,137.7743,SA,Subcontractor,YES,YES,NO,YES,YES,YES,(08)86413232,security@sgsspa.com.au,LIMITED SKILLSET - must check with SDC if not NEO/Qol/SYB/Hik. Alternate Resource: ADT (Adelaide),TRUE
+Sunshine Coast,Steve McCluskey,-26.6528,153.0896,QLD,Subcontractor,YES,YES,YES,YES,YES,YES,0419745726,mccluskey.steve@gmail.com,,TRUE
+Wollongong,Technical Installations - Martin Wilkinson,-34.4248,150.8931,NSW,Subcontractor,YES,YES,YES,YES,YES,YES,0439600594,tinst31@bigpond.net.au,,TRUE
+Armidale,Tritech Security - Trent Harper,-30.5036,151.6523,NSW,Subcontractor,YES,YES,YES,YES,YES,NO,(02)67722465,office@tritechsecurity.com.au,,TRUE
+Canberra,Technical Installations - Martin Wilkinson,-35.2802,149.131,ACT,Subcontractor,YES,YES,YES,YES,YES,YES,0439600594,tinst31@bigpond.net.au,,TRUE
+Albany,ABA Security - Renee,-35.0268,117.8837,WA,Subcontractor,YES,YES,YES,YES,YES,NO,(08)98417828,works@abasecurity.com.au,,TRUE
+Brisbane,ADT,-27.4705,153.026,QLD,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs,TRUE
+Gold Coast,ADT,-27.9769,153.3809,QLD,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Certain Techs can travel into NSW.,TRUE
+Hobart,Coverall Security,-42.8826,147.3257,TAS,Subcontractor,YES,YES,YES,YES,YES,NO,(03)61082520,service@coverallsecurity.com.au,Covers all of TAS,TRUE
