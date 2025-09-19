@@ -411,7 +411,7 @@
           accom: needsAccom,
           ferry: ferry,
           outOfState: outOfStateNearest,
-          state: p.State || ''
+          state: stateAbbrev || ''
         });
 
         const alts = alternatesSorted(coord, feats, nearest.id);
@@ -532,7 +532,7 @@
                 accom: needsAccomAlt,
                 ferry: ferryAlt,
                 outOfState: isOutOfState,
-                state: pf.State || ''
+                state: stateAbbrev  || ''
               });
 
               body.style.display='block';
@@ -638,3 +638,4 @@
 </script>
 </body>
 </html>
+
