@@ -1,8 +1,11 @@
 {
   "rates": {
     "Default": 2.08,
-    "Premium": 3.10
+    "Premium": 2.50,
+    "Rural": 3.10
   },
   "gst": 0.10,
-  "freeKm": 50
+  "freeKm": 50,
+  "slTriggerKm": 35,
+  "graceKm": 15
 }
