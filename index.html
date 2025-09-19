@@ -187,11 +187,26 @@
     });
   }
 
+  // ---- Directions with Ferry detection ----
   async function getDriving(from,to){
-    const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=full&geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-    const res=await fetch(url); const j=await res.json();
-    const r=j.routes?.[0]; if(!r) throw new Error('No route');
-    return { km:r.distance/1000, minutes:r.duration/60, geometry:r.geometry };
+    const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=full&geometries=geojson&steps=true&access_token=${MAPBOX_TOKEN}`;
+    const res=await fetch(url);
+    const j=await res.json();
+    const r=j.routes?.[0];
+    if(!r) throw new Error('No route');
+
+    // detect ferry at route or step level
+    const hasFerry =
+      (Array.isArray(r.classes) && r.classes.includes('ferry')) ||
+      (Array.isArray(r.legs) && r.legs.some(l =>
+         Array.isArray(l.steps) && l.steps.some(s =>
+           (s.mode && String(s.mode).toLowerCase()==='ferry') ||
+           /ferry/i.test(s.name||'') ||
+           /ferry/i.test(s.maneuver?.instruction||'')
+         )
+       ));
+
+    return { km:r.distance/1000, minutes:r.duration/60, geometry:r.geometry, ferry: !!hasFerry };
   }
 
   function serviceChips(p){
@@ -344,7 +359,7 @@
         const slKm = pick.km;
 
         let within = false;
-        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null;
+        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, ferry=false;
 
         if (slKm <= SL_TRIGGER_KM) {
           within = true; // clearly within
@@ -352,6 +367,7 @@
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
             const roadKm = r.km; const roadMin = r.minutes;
+            ferry = !!r.ferry;
             if (roadKm <= FREE_KM + GRACE_KM) {
               // grace → still within; keep SL display
               within = true;
@@ -393,7 +409,7 @@
         // ===== Alternates: precheck edge-zone (35–50 km SL), else lazy =====
         const alts = alternatesSorted(coord, feats, nearest.id);
 
-        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom, needsAccom }
+        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom, needsAccom, ferry }
         await Promise.all(alts.map(async (a, i) => {
           if (a.slKm > SL_TRIGGER_KM && a.slKm <= FREE_KM) {
             try{
@@ -406,14 +422,15 @@
                 km:roadKm,
                 mins:roadMin,
                 geom:r.geometry,
-                needsAccom: outside && (roadKm > ACCOM_KM || roadMin > ACCOM_MIN)
+                needsAccom: outside && (roadKm > ACCOM_KM || roadMin > ACCOM_MIN),
+                ferry: !!r.ferry
               };
             }catch(e){
               console.warn('Alt precheck failed; will lazy on expand', e);
               altCache[i] = { prechecked:false };
             }
           } else {
-            altCache[i] = { prechecked:false }; // clearly inside (≤35) or far outside (>50): no precheck
+            altCache[i] = { prechecked:false }; // clearly inside (≤35) or far outside (>50)
           }
         }));
 
@@ -431,6 +448,7 @@
           const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
           const accomNow = (!!cache.prechecked && !!cache.outside && !!cache.needsAccom);
+          const ferryNow = (!!cache.prechecked && !!cache.ferry);
 
           return `
             <details class="alt" data-alt-index="${i}">
@@ -439,6 +457,7 @@
                 <span class="pill ${cls}">${txt}</span>
                 ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
                 <span class="pill warn accom-pill" style="display:${accomNow ? 'inline-block' : 'none'}">Accommodation may be required – Check with SDC</span>
+                <span class="pill warn ferry-pill" style="display:${ferryNow ? 'inline-block' : 'none'}">Ferry likely required – Check pricing</span>
               </summary>
               <div class="alt-body" style="display:none"></div>
             </details>
@@ -451,6 +470,7 @@
             <div class="pill ${badgeClass}">${badgeText}</div>
             ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
             ${needsAccom ? `<div class="pill warn">Accommodation may be required – Check with SDC</div>` : ``}
+            ${ferry ? `<div class="pill warn">Ferry likely required – Check pricing</div>` : ``}
           </div>
           <div class="row">
             <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
@@ -489,32 +509,39 @@
             const body = el.querySelector('.alt-body');
 
             if(el.open){
-              let akm, amins, amode='straight', ageom=null, outside=false, needsAccomAlt=false;
+              let akm, amins, amode='straight', ageom=null, outside=false, needsAccomAlt=false, ferryAlt=false;
 
               if (cache.prechecked) {
                 if (cache.outside) {
                   akm = cache.km; amins = cache.mins; amode='driving'; ageom=cache.geom; outside=true;
                   needsAccomAlt = cache.needsAccom;
+                  ferryAlt = !!cache.ferry;
                 } else {
                   akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false;
+                  ferryAlt = false;
                 }
               } else if (alt.slKm > FREE_KM) {
                 try{
                   const r = await getDriving(queryCoordGlobal, lngLat);
                   akm=r.km; amins=r.minutes; amode='driving'; ageom=r.geometry; outside=true;
                   needsAccomAlt = (akm > ACCOM_KM || amins > ACCOM_MIN);
+                  ferryAlt = !!r.ferry;
                 }catch(e){
                   console.warn('Alt Directions failed; fallback to SL', e);
                   akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=akm>FREE_KM; ageom=null;
                   needsAccomAlt = false;
+                  ferryAlt = false;
                 }
               } else {
                 akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false;
+                ferryAlt = false;
               }
 
-              // Update summary accommodation pill based on fresh info
+              // Update summary pills based on fresh info
               const accomPill = el.querySelector('.accom-pill');
               if (accomPill) accomPill.style.display = needsAccomAlt ? 'inline-block' : 'none';
+              const ferryPill = el.querySelector('.ferry-pill');
+              if (ferryPill) ferryPill.style.display = ferryAlt ? 'inline-block' : 'none';
 
               let acost=0;
               if(outside){
@@ -529,7 +556,6 @@
                   <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
                   <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
                   <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
-                  ${needsAccomAlt ? `<div class="pill warn">Accommodation may be required – Check with SDC</div>` : ``}
                 </div>
                 <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
                 <div class="row chips">${chips}</div>
