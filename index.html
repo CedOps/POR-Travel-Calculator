@@ -85,13 +85,17 @@
 
 <script>
 (() => {
-  // ====== CONFIG (defaults; override via config.json) ======
+  // ===== CONFIG (defaults; override via config.json) =====
   let RATES = { "Default": 2.08 };
   let RATE_PER_KM = 2.08;  // ex GST
   let GST_PERCENT = 0.10;
   let FREE_KM     = 50;
   let SL_TRIGGER_KM = 35;  // start road check when SL > 35 km
   let GRACE_KM    = 15;    // invisible grace on road distance
+
+  // Accommodation thresholds
+  const ACCOM_KM  = 250;
+  const ACCOM_MIN = 150;
 
   const MAPBOX_TOKEN = "pk.eyJ1IjoibWVpc3RlcmciLCJhIjoiY21mbWZ3MWljMDFmZzJsb2UyNzlvanhwdiJ9.ABrCTCsLUIcU0R7bXv_GbA";
   const CSV_URL      = "data.csv";
@@ -334,13 +338,13 @@
         map.getSource('query-point').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]});
         queryCoordGlobal = coord;
 
-        // Nearest: state-preferred, then edge-zone check with invisible grace
+        // Nearest selection (state-preferred)
         const pick = nearestInStateOrFallback(coord, feats, stateAbbrev);
         const nearest = pick.feature;
         const slKm = pick.km;
 
         let within = false;
-        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, usedRoad=false;
+        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null;
 
         if (slKm <= SL_TRIGGER_KM) {
           within = true; // clearly within
@@ -349,12 +353,12 @@
             const r = await getDriving(coord, nearest.geometry.coordinates);
             const roadKm = r.km; const roadMin = r.minutes;
             if (roadKm <= FREE_KM + GRACE_KM) {
-              // Invisible grace → still within; keep SL display
+              // grace → still within; keep SL display
               within = true;
-              km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; usedRoad=false; modeLabel='straight-line';
+              km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
             } else {
               within = false;
-              km = roadKm; mins = roadMin; routeGeom = r.geometry; usedRoad=true; modeLabel='road';
+              km = roadKm; mins = roadMin; routeGeom = r.geometry; modeLabel='road';
             }
           }catch(e){
             console.warn('Nearest Directions failed; fallback to SL', e);
@@ -381,49 +385,62 @@
           travelCost = chargeable * 2 * RATE_PER_KM * gstFactor();
         }
 
+        const needsAccom = (!within) && (km > ACCOM_KM || mins > ACCOM_MIN);
+
         const p=nearest.properties;
         const chipsHTML = serviceChips(p);
 
         // ===== Alternates: precheck edge-zone (35–50 km SL), else lazy =====
         const alts = alternatesSorted(coord, feats, nearest.id);
 
-        // Precompute road checks for alternates in edge-zone
-        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom }
+        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom, needsAccom }
         await Promise.all(alts.map(async (a, i) => {
           if (a.slKm > SL_TRIGGER_KM && a.slKm <= FREE_KM) {
             try{
               const r = await getDriving(coord, a.feature.geometry.coordinates);
               const roadKm = r.km, roadMin = r.minutes;
               const outside = roadKm > (FREE_KM + GRACE_KM);
-              altCache[i] = { prechecked:true, outside, km:roadKm, mins:roadMin, geom:r.geometry };
+              altCache[i] = {
+                prechecked:true,
+                outside,
+                km:roadKm,
+                mins:roadMin,
+                geom:r.geometry,
+                needsAccom: outside && (roadKm > ACCOM_KM || roadMin > ACCOM_MIN)
+              };
             }catch(e){
               console.warn('Alt precheck failed; will lazy on expand', e);
               altCache[i] = { prechecked:false };
             }
           } else {
-            altCache[i] = { prechecked:false }; // clearly inside (<=35) or far outside (>50): no precheck
+            altCache[i] = { prechecked:false }; // clearly inside (≤35) or far outside (>50): no precheck
           }
         }));
 
         const altHtml = alts.map((a, i) => {
           const pf = a.feature.properties;
           const cache = altCache[i] || {prechecked:false};
-          // Determine pill based on precheck (if any) or SL
           let withinAlt;
           if (cache.prechecked) {
-            withinAlt = !cache.outside; // if prechecked and not outside → within
+            withinAlt = !cache.outside;
           } else {
             withinAlt = a.slKm <= FREE_KM; // fallback to SL
           }
           const cls = withinAlt ? 'ok':'warn';
           const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
           const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+
+          const accomSummaryPill = (!withinAlt && cache.prechecked && cache.needsAccom)
+            ? `<span class="pill warn">Accommodation may be required – Check with SDC</span>`
+            : ``;
+
           return `
             <details class="alt" data-alt-index="${i}">
               <summary>
                 <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
                 <span class="pill ${cls}">${txt}</span>
                 ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
+                ${accomSummaryPill}
               </summary>
               <div class="alt-body" style="display:none"></div>
             </details>
@@ -435,6 +452,7 @@
             <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
             <div class="pill ${badgeClass}">${badgeText}</div>
             ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
+            ${needsAccom ? `<div class="pill warn">Accommodation may be required – Check with SDC</div>` : ``}
           </div>
           <div class="row">
             <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
@@ -473,29 +491,27 @@
             const body = el.querySelector('.alt-body');
 
             if(el.open){
-              // Fill body using cache (if prechecked) or fetch lazily
-              let akm, amins, amode='straight', ageom=null, outside=false;
+              let akm, amins, amode='straight', ageom=null, outside=false, needsAccomAlt=false;
 
               if (cache.prechecked) {
-                // We already know road result (outside=true means road > 65)
                 if (cache.outside) {
                   akm = cache.km; amins = cache.mins; amode='driving'; ageom=cache.geom; outside=true;
+                  needsAccomAlt = cache.needsAccom;
                 } else {
-                  // within (via grace or actually inside): keep SL display, no line
-                  akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ageom=null;
+                  akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false;
                 }
               } else if (alt.slKm > FREE_KM) {
-                // Clearly outside by SL → fetch on demand
                 try{
                   const r = await getDriving(queryCoordGlobal, lngLat);
                   akm=r.km; amins=r.minutes; amode='driving'; ageom=r.geometry; outside=true;
+                  needsAccomAlt = (akm > ACCOM_KM || amins > ACCOM_MIN);
                 }catch(e){
                   console.warn('Alt Directions failed; fallback to SL', e);
                   akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=akm>FREE_KM; ageom=null;
+                  needsAccomAlt = false;
                 }
               } else {
-                // Clearly inside by SL (≤35) → within
-                akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ageom=null;
+                akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false;
               }
 
               let acost=0;
@@ -511,6 +527,7 @@
                   <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
                   <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
                   <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
+                  ${needsAccomAlt ? `<div class="pill warn">Accommodation may be required – Check with SDC</div>` : ``}
                 </div>
                 <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
                 <div class="row chips">${chips}</div>
@@ -519,15 +536,12 @@
                   : ``}
               `;
 
-              // Draw/clear the line depending on outside
               addOrUpdateLine(map, layerId, color, (outside && ageom) ? ageom : null);
 
-              // Popup for that pin
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
                 .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
               altPopups[layerId] = popup;
 
-              // Fit bounds with any open alternates
               activeAltCoords.set(layerId, lngLat);
               const b=new mapboxgl.LngLatBounds();
               b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
@@ -557,7 +571,6 @@
       }
     }
 
-    // ==== Map load: pins, rings, and geocoder wiring ====
     map.on('load', ()=>{
       const fcPins={type:'FeatureCollection',features:feats};
       map.addSource('pins',{type:'geojson',data:fcPins});
