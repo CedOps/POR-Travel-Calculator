@@ -33,12 +33,14 @@
   .cost-pill{
     border-color:#60a5fa;background:#eff6ff;
     box-shadow: inset 0 0 0 1px rgba(96,165,250,.25);
+    display:flex; align-items:center; gap:6px;
   }
   .cost-main{font-weight:700}
   .cost-sub{color:#6b7280;font-size:12px;margin-left:6px}
   .cost-zero{background:#f3f4f6;border-color:#d1d5db;box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);color:#374151}
   .cost-pay{background:#fffbeb;border-color:#f59e0b;box-shadow: inset 0 0 0 1px rgba(245,158,11,.25);color:#7c2d12}
 
+  /* Alternates */
   details.alt{margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px}
   details.alt > summary{
     cursor:pointer; list-style:none; padding:4px 8px; border-radius:8px;
@@ -66,14 +68,51 @@
     .mapboxgl-ctrl-top-right .mapboxgl-ctrl-geocoder { width: 90vw; min-width: 0; max-width: 90vw; }
   }
 
+  /* Toast */
   #toast{
     position:fixed; left:50%; bottom:16px; transform:translateX(-50%);
     background:#111827; color:#fff; padding:8px 12px; border-radius:10px;
     font:12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial;
     opacity:0; pointer-events:none; z-index:10000;
     box-shadow:0 8px 24px rgba(0,0,0,.25); transition:opacity .25s ease;
+    max-width:90vw; word-break:break-word;
   }
   #toast.show{opacity:0.95}
+
+  /* Red Instructions row */
+  #status .instr { color:#7f1d1d; }
+
+  /* Copy button (press feedback) */
+  .copy-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    margin-left: 8px;
+    display: flex;
+    align-items: center;
+    color: #374151;
+    transition: transform 0.1s ease, color 0.1s ease;
+  }
+  .copy-btn:hover { color: #111827; }
+  .copy-btn:active { transform: scale(0.9); color: #000; }
+  .copy-btn svg { width: 14px; height: 14px; pointer-events: none; }
+
+  /* Copy pulse badge */
+  .copy-pulse{
+    margin-left:6px;
+    font-size:11px;
+    opacity:0;
+    transform: translateY(2px) scale(0.96);
+    transition: opacity .18s ease, transform .18s ease;
+    user-select:none;
+  }
+  .copy-pulse.show{
+    opacity:1;
+    transform: translateY(0) scale(1);
+  }
+  /* Context-aware pulse colors */
+  .copy-pulse.pulse-amber { color:#b45309; } /* amber-700 */
+  .copy-pulse.pulse-gray  { color:#374151; } /* gray-700 */
 </style>
 </head>
 <body>
@@ -139,7 +178,7 @@
         });
         sel.addEventListener('change', ()=>{
           RATE_PER_KM=parseFloat(sel.value);
-          refreshCostsFromStored(); // only numbers; colours are binary and already set
+          refreshCostsFromStored(); // recompute from stored rounded km
           showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
         });
         container.appendChild(label); container.appendChild(sel);
@@ -223,7 +262,7 @@
     </div>`;
   }
 
-  // NEW: instruction builder (standardised wording)
+  // Instruction builder
   function buildInstructions({accom,ferry,outOfState,state}){
     const parts=[];
     if(accom) parts.push('Accommodation charges may apply');
@@ -291,7 +330,7 @@
   const activeAltCoords = new Map();
 
   function refreshCostsFromStored(){
-    const km = Number(statusEl?.dataset?.nearestKm || NaN);
+    const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
     if(!isNaN(km)){
       const chargeable = Math.max(0, km - FREE_KM);
       const ex  = chargeable * 2 * RATE_PER_KM;
@@ -300,21 +339,44 @@
       const subEl=document.getElementById('nearest-cost-sub');
       if(incEl) incEl.textContent = money(inc);
       if(subEl) subEl.textContent = `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
-      // colour stays binary as set initially
+      // also update pulse color to reflect payable vs zero
+      const pill = document.getElementById('nearest-cost-pill');
+      const pulse = document.getElementById('pulse-nearest');
+      if (pill && pulse) {
+        const payable = pill.classList.contains('cost-pay');
+        pulse.classList.toggle('pulse-amber', payable);
+        pulse.classList.toggle('pulse-gray',  !payable);
+      }
     }
     document.querySelectorAll('.alt-cost-main').forEach(span=>{
-      const akm=Number(span.dataset.km); if(isNaN(akm)) return;
+      const akm=Number(span.dataset.km); if(isNaN(akm)) return; // rounded
       const chargeable=Math.max(0, akm-FREE_KM);
       const exAlt=chargeable*2*RATE_PER_KM;
       const incAlt=exAlt*gstFactor();
       span.textContent = money(incAlt);
     });
     document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
-      const akm=Number(sub.dataset.km); if(isNaN(akm)) return;
+      const akm=Number(sub.dataset.km); if(isNaN(akm)) return; // rounded
       const chargeable=Math.max(0, akm-FREE_KM);
       const exAlt=chargeable*2*RATE_PER_KM;
       sub.textContent = `(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
     });
+  }
+
+  // Used to label the searched location in copy text
+  let lastSearchLabel = '';
+
+  // Mini pulse next to copy icon
+  function flashPulse(btn, text='Copied'){
+    let pulse = btn.nextElementSibling;
+    if(!pulse || !pulse.classList.contains('copy-pulse')){
+      pulse = document.createElement('span');
+      pulse.className = 'copy-pulse';
+      btn.insertAdjacentElement('afterend', pulse);
+    }
+    pulse.textContent = text;
+    pulse.classList.add('show');
+    setTimeout(()=> pulse.classList.remove('show'), 1200);
   }
 
   async function main(){
@@ -377,7 +439,10 @@
           }
         }
 
-        // DRAW LINE: road if outside, straight if within (or directions failed)
+        // ROUND distance up (drives both display and cost)
+        const kmRounded = Math.ceil(km);
+
+        // DRAW: road if outside; straight if within (or directions failed)
         if (!within && routeGeom) {
           addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
         } else {
@@ -395,9 +460,10 @@
         const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
         const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
+        // COSTS (use rounded km)
         let ex=0, inc=0;
         if(!within){
-          const chargeable=Math.max(0, km - FREE_KM);
+          const chargeable=Math.max(0, kmRounded - FREE_KM);
           ex  = chargeable * 2 * RATE_PER_KM;
           inc = ex * gstFactor();
         }
@@ -434,7 +500,7 @@
         const altHtml = alts.map((a, i) => {
           const pf = a.feature.properties;
           const cache = altCache[i] || {prechecked:false};
-          let withinAlt = cache.prechecked ? !cache.outside : (a.slKm <= FREE_KM);
+          const withinAlt = cache.prechecked ? !cache.outside : (a.slKm <= FREE_KM);
           const cls = withinAlt ? 'ok':'warn';
           const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
           const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
@@ -464,7 +530,7 @@
             ${ferry ? `<div class="pill warn">Ferry required – Check w SDC</div>` : ``}
           </div>
           <div class="row">
-            <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
+            <div class="pill"><b>Distance (One Way):</b> ${kmRounded} km <span class="muted">(${modeLabel})</span></div>
             <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
           </div>
           <div class="row">
@@ -472,9 +538,16 @@
               <b>Travel Charge inc GST:</b>
               <span id="nearest-cost-main" class="cost-main">${money(inc)}</span>
               <span id="nearest-cost-sub" class="cost-sub">(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+              <button class="copy-btn" id="copy-nearest" title="Copy to clipboard" aria-label="Copy to clipboard">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+              <span class="copy-pulse" id="pulse-nearest" aria-hidden="true">Copied</span>
             </div>
           </div>
-          ${instrNearest ? `<div class="row"><div><b>Instructions:</b> ${instrNearest.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
+          ${instrNearest ? `<div class="row instr"><div><b>Instructions:</b> ${instrNearest.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
           <div class="row"><div><b>Preferred Resource:</b> ${p['Preferred Resource']||'—'}</div></div>
           <div class="row">${chipsHTML}</div>
           ${(p.Notes && String(p.Notes).trim())
@@ -483,7 +556,26 @@
           ${altHtml ? `<hr class="alts-sep"><div class="row" style="margin-top:0"><b>Alternate PORs:</b></div>${altHtml}` : ''}
         `);
 
-        statusEl.dataset.nearestKm = String(km);
+        // store rounded km for later recalc on rate change
+        statusEl.dataset.nearestKm = String(kmRounded);
+
+        // Set pulse color to match the nearest cost pill
+        const pulseNearest = document.getElementById('pulse-nearest');
+        if (pulseNearest) {
+          pulseNearest.classList.toggle('pulse-amber', costClassNearest === 'cost-pay');
+          pulseNearest.classList.toggle('pulse-gray',  costClassNearest !== 'cost-pay');
+        }
+
+        // Nearest COPY BUTTON
+        const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
+        const searchLabel = lastSearchLabel || `Selected location`;
+        const copyLine = `Travel charges to ${searchLabel} from ${porLabel} – ${kmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(inc)} inc GST (${money(ex)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+        const copyBtnNearest = document.getElementById('copy-nearest');
+        copyBtnNearest?.addEventListener('click', () => {
+          navigator.clipboard.writeText(copyLine)
+            .then(()=> { showToast(`Copied to clipboard: ${copyLine}`); flashPulse(copyBtnNearest, 'Copied'); })
+            .catch(()=> showToast('Copy failed'));
+        });
 
         // wire alternates
         document.querySelectorAll('details.alt').forEach((el)=>{
@@ -518,37 +610,49 @@
                 }
               } else { akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ferryAlt=false; }
 
+              // ROUND alt distance up
+              const akmRounded = Math.ceil(akm);
+
+              // Costs (rounded distance)
+              const chargeable=Math.max(0, akmRounded-FREE_KM);
               let exAlt=0, incAlt=0;
-              if(outside){ const ch=Math.max(0, akm-FREE_KM); exAlt=ch*2*RATE_PER_KM; incAlt=exAlt*gstFactor(); }
+              if(outside){ exAlt=chargeable*2*RATE_PER_KM; incAlt=exAlt*gstFactor(); }
               const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
 
               const accomPill = el.querySelector('.accom-pill');
-              if (accomPill) accomPill.style.display = needsAccomAlt ? 'inline-block' : 'none';
+              if (accomPill) accomPill.style.display = (outside && (akm > ACCOM_KM || amins > ACCOM_MIN)) ? 'inline-block' : 'none';
               const ferryPill = el.querySelector('.ferry-pill');
               if (ferryPill) ferryPill.style.display = ferryAlt ? 'inline-block' : 'none';
 
               const chips = serviceChips(pf);
               const instrAlt = buildInstructions({
-                accom: needsAccomAlt,
+                accom: (outside && (akm > ACCOM_KM || amins > ACCOM_MIN)),
                 ferry: ferryAlt,
                 outOfState: isOutOfState,
-                state: stateAbbrev  || ''
+                state: stateAbbrev || ''
               });
 
               body.style.display='block';
               body.innerHTML = `
                 <div class="row">
-                  <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
+                  <div class="pill"><b>Distance (One Way):</b> ${akmRounded} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
                   <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
                 </div>
                 <div class="row">
                   <div class="pill cost-pill ${costClassAlt}">
                     <b>Travel Charge inc GST:</b>
-                    <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(incAlt)}</span>
-                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akm.toFixed(3)}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+                    <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
+                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+                    <button class="copy-btn" id="copy-alt-${idx}" title="Copy to clipboard" aria-label="Copy to clipboard">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                    <span class="copy-pulse ${costClassAlt==='cost-pay' ? 'pulse-amber' : 'pulse-gray'}" aria-hidden="true">Copied</span>
                   </div>
                 </div>
-                ${instrAlt ? `<div class="row"><div><b>Instructions:</b> ${instrAlt.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
+                ${instrAlt ? `<div class="row instr"><div><b>Instructions:</b> ${instrAlt.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
                 <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
                 <div class="row chips">${chips}</div>
                 ${(pf.Notes && String(pf.Notes).trim())
@@ -561,6 +665,23 @@
                 ? ageom
                 : { type:'LineString', coordinates:[queryCoordGlobal, lngLat] };
               addOrUpdateLine(map, layerId, color, geomToDraw);
+
+              // ALT COPY BUTTON
+              const porLabelAlt = `${pf.POR || ''}, ${pf.State || ''}`.replace(/\s+,/g, ',').trim();
+              const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
+              const lineContainer = copyBtnAlt?.parentElement; // holds the pulse span we just injected
+              const pulseSpan = lineContainer?.querySelector('.copy-pulse');
+              const copyLineAlt = `Travel charges to ${searchLabel} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+
+              copyBtnAlt?.addEventListener('click', () => {
+                navigator.clipboard.writeText(copyLineAlt)
+                  .then(()=> {
+                    showToast(`Copied to clipboard: ${copyLineAlt}`);
+                    if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
+                    else { flashPulse(copyBtnAlt, 'Copied'); }
+                  })
+                  .catch(()=> showToast('Copy failed'));
+              });
 
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
                 .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
@@ -616,6 +737,9 @@
       geocoder.on('result', e => {
         const center=e?.result?.center;
         const stateAbbrev=getAUStateAbbrevFromGeocoder(e?.result)||'';
+        // Build a concise label like "Suburb, STATE"
+        const suburb = (e?.result?.text || '').trim();
+        lastSearchLabel = suburb && stateAbbrev ? `${suburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
         if(center) showNearestFrom(center, stateAbbrev);
       });
       geocoder.on('clear', () => {
@@ -626,6 +750,7 @@
         if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
         activeAltCoords.clear();
         if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
+        lastSearchLabel = '';
         setStatus('Cleared.');
       });
 
@@ -638,4 +763,3 @@
 </script>
 </body>
 </html>
-
