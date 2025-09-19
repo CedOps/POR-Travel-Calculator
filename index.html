@@ -19,7 +19,7 @@
   #map{position:absolute;inset:0}
   #status{
     position:fixed;left:8px;top:8px;z-index:1000;background:#fff;border:1px solid #e5e7eb;border-radius:12px;
-    padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:820px;
+    padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:860px;
   }
   #status .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0}
   #status .pill{border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px}
@@ -42,13 +42,18 @@
   }
   .chips{margin-top:6px}
 
-  /* Rate Control (top-right) */
+  /* “Alternate PORs” section separator */
+  .alts-sep{
+    border:0; border-top:2px solid #e5e7eb; margin:8px 0 6px;
+  }
+
+  /* Rate Control (top-right, below geocoder) */
   .rate-ctrl{
     display:flex; align-items:center; gap:6px;
     background:#fff; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px;
     box-shadow:0 1px 6px rgba(0,0,0,.08);
     font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial;
-    margin-right:6px;
+    margin-top:6px;   /* small gap below the search box */
   }
   .rate-ctrl label{color:#374151; font-size:12px}
   .rate-ctrl select{font-size:12px; padding:4px 6px; border-radius:8px; border:1px solid #d1d5db; background:#fff}
@@ -140,23 +145,29 @@
         const label = document.createElement('label'); label.textContent = 'Rate:';
         const sel = document.createElement('select');
         Object.entries(RATES).forEach(([name, val])=>{
+          const v = Number(val);
           const opt = document.createElement('option');
-          opt.value = String(val);
-          opt.textContent = `${name} (${Number(val).toFixed(2)}/km ex GST)`;
-          if (Math.abs(Number(val) - RATE_PER_KM) < 1e-9) opt.selected = true;
+          opt.value = String(v);
+          opt.textContent = `${name} ($${v.toFixed(2)}/km ex GST)`;
+          if (Math.abs(v - RATE_PER_KM) < 1e-9) opt.selected = true;
           sel.appendChild(opt);
         });
         sel.addEventListener('change', ()=>{
           RATE_PER_KM = parseFloat(sel.value);
           refreshCostsFromStored();
-          showToast(`Rate → ${RATE_PER_KM.toFixed(2)}/km ex GST`);
+          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
         });
         container.appendChild(label);
         container.appendChild(sel);
+
+        // Insert AFTER the geocoder (i.e., below it)
         setTimeout(()=>{
           const corner = document.querySelector('.mapboxgl-ctrl-top-right');
           const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
-          if(corner && geocoder){ corner.insertBefore(container, geocoder); }
+          if(corner && geocoder){
+            if (geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
+            else corner.appendChild(container);
+          }
         },0);
         return container;
       }
@@ -195,7 +206,6 @@
     const r=j.routes?.[0];
     if(!r) throw new Error('No route');
 
-    // detect ferry at route or step level
     const hasFerry =
       (Array.isArray(r.classes) && r.classes.includes('ferry')) ||
       (Array.isArray(r.legs) && r.legs.some(l =>
@@ -306,7 +316,7 @@
       const costEl=document.getElementById('nearest-cost');
       if(costEl) costEl.textContent=money(cost);
     }
-    document.querySelectorAll('.rate-label').forEach(el=>{ el.textContent=`(${money(RATE_PER_KM)} / km ex GST)`; });
+    document.querySelectorAll('.rate-label').forEach(el=>{ el.textContent=`($${RATE_PER_KM.toFixed(2)}/km ex GST)`; });
     document.querySelectorAll('.alt-cost').forEach(span=>{
       const akm=Number(span.dataset.km); if(isNaN(akm)) return;
       const altWithin = akm <= FREE_KM;
@@ -353,7 +363,6 @@
         map.getSource('query-point').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]});
         queryCoordGlobal = coord;
 
-        // Nearest selection (state-preferred)
         const pick = nearestInStateOrFallback(coord, feats, stateAbbrev);
         const nearest = pick.feature;
         const slKm = pick.km;
@@ -362,14 +371,13 @@
         let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, ferry=false;
 
         if (slKm <= SL_TRIGGER_KM) {
-          within = true; // clearly within
+          within = true;
         } else {
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
             const roadKm = r.km; const roadMin = r.minutes;
             ferry = !!r.ferry;
             if (roadKm <= FREE_KM + GRACE_KM) {
-              // grace → still within; keep SL display
               within = true;
               km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
             } else {
@@ -406,10 +414,9 @@
         const p=nearest.properties;
         const chipsHTML = serviceChips(p);
 
-        // ===== Alternates: precheck edge-zone (35–50 km SL), else lazy =====
         const alts = alternatesSorted(coord, feats, nearest.id);
 
-        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom, needsAccom, ferry }
+        const altCache = {};
         await Promise.all(alts.map(async (a, i) => {
           if (a.slKm > SL_TRIGGER_KM && a.slKm <= FREE_KM) {
             try{
@@ -430,7 +437,7 @@
               altCache[i] = { prechecked:false };
             }
           } else {
-            altCache[i] = { prechecked:false }; // clearly inside (≤35) or far outside (>50)
+            altCache[i] = { prechecked:false };
           }
         }));
 
@@ -441,23 +448,23 @@
           if (cache.prechecked) {
             withinAlt = !cache.outside;
           } else {
-            withinAlt = a.slKm <= FREE_KM; // fallback to SL
+            withinAlt = a.slKm <= FREE_KM;
           }
           const cls = withinAlt ? 'ok':'warn';
           const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
           const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
           const accomNow = (!!cache.prechecked && !!cache.outside && !!cache.needsAccom);
-          const ferryNow = (!!cache.prechecked && !!cache.ferry);
+          const ferryNow  = (!!cache.prechecked && !!cache.ferry);
 
           return `
             <details class="alt" data-alt-index="${i}">
               <summary>
-                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
+                <span><b>Alt POR:</b> ${pf.POR}, ${pf.State||''}</span>
                 <span class="pill ${cls}">${txt}</span>
                 ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
                 <span class="pill warn accom-pill" style="display:${accomNow ? 'inline-block' : 'none'}">Accommodation may be required – Check with SDC</span>
-                <span class="pill warn ferry-pill" style="display:${ferryNow ? 'inline-block' : 'none'}">Ferry likely required – Check pricing</span>
+                <span class="pill warn ferry-pill"  style="display:${ferryNow ? 'inline-block' : 'none'}">Ferry required – Check w SDC</span>
               </summary>
               <div class="alt-body" style="display:none"></div>
             </details>
@@ -470,14 +477,14 @@
             <div class="pill ${badgeClass}">${badgeText}</div>
             ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
             ${needsAccom ? `<div class="pill warn">Accommodation may be required – Check with SDC</div>` : ``}
-            ${ferry ? `<div class="pill warn">Ferry likely required – Check pricing</div>` : ``}
+            ${ferry ? `<div class="pill warn">Ferry required – Check w SDC</div>` : ``}
           </div>
           <div class="row">
             <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
             <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
             <div class="pill">
               <b>Travel Charge inc GST:</b> <span id="nearest-cost">${money(travelCost)}</span>
-              <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span>
+              <span class="muted rate-label">($${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
             </div>
           </div>
           <div class="row"><div><b>Preferred Resource:</b> ${p['Preferred Resource']||'—'}</div></div>
@@ -485,7 +492,7 @@
           ${(p.Notes && String(p.Notes).trim())
             ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
             : ``}
-          ${altHtml ? `<div class="row" style="margin-top:6px"><b>Alternates:</b></div>${altHtml}` : ''}
+          ${altHtml ? `<hr class="alts-sep"><div class="row" style="margin-top:0"><b>Alternate PORs:</b></div>${altHtml}` : ''}
         `);
 
         // Store nearest km for rate dropdown refresh
@@ -555,7 +562,7 @@
                 <div class="row">
                   <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
                   <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
-                  <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
+                  <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">($${RATE_PER_KM.toFixed(2)}/km ex GST)</span></div>
                 </div>
                 <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
                 <div class="row chips">${chips}</div>
