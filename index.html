@@ -49,12 +49,12 @@
     background:#fff; padding:6px 8px; border:1px solid #e5e7eb; border-radius:8px;
     box-shadow:0 1px 6px rgba(0,0,0,.08);
     font:12px system-ui,-apple-system,Segoe UI,Roboto,Arial;
-    margin-right:6px; /* gap from geocoder */
+    margin-right:6px;
   }
   .rate-ctrl label{color:#374151; font-size:12px}
   .rate-ctrl select{font-size:12px; padding:4px 6px; border-radius:8px; border:1px solid #d1d5db; background:#fff}
 
-  /* Make search box wider (1.5×) */
+  /* Wider search box */
   .mapboxgl-ctrl-top-right .mapboxgl-ctrl-geocoder {
     width: 540px;
     min-width: 540px;
@@ -88,19 +88,21 @@
 (() => {
   // ====== CONFIG (defaults; override via config.json) ======
   let RATES = { "Default": 2.08 };
-  let RATE_PER_KM = 2.08;  // active rate (ex GST)
+  let RATE_PER_KM = 2.08;  // ex GST
   let GST_PERCENT = 0.10;
   let FREE_KM     = 50;
+  let SL_TRIGGER_KM = 35;  // new
+  let GRACE_KM    = 15;    // new (invisible)
 
   const MAPBOX_TOKEN = "pk.eyJ1IjoibWVpc3RlcmciLCJhIjoiY21mbWZ3MWljMDFmZzJsb2UyNzlvanhwdiJ9.ABrCTCsLUIcU0R7bXv_GbA";
-  const CSV_URL      = "data.csv"; // must sit next to this file
+  const CSV_URL      = "data.csv";
   const COUNTRIES    = "AU";
   const CURRENCY     = "AUD";
 
-  const AVG_SPEED_KPH = 80;                 // fallback for straight-line time
-  const ALT_COUNT     = 3;                  // number of alternates
-  const NEAREST_COLOR = '#2563eb';          // blue
-  const ALT_COLORS    = ['#f59e0b','#ef4444','#10b981']; // yellow, red, green
+  const AVG_SPEED_KPH = 80;
+  const ALT_COUNT     = 3;
+  const NEAREST_COLOR = '#2563eb';
+  const ALT_COLORS    = ['#f59e0b','#ef4444','#10b981'];
 
   const statusEl = document.getElementById('status');
   const toastEl  = document.getElementById('toast');
@@ -113,7 +115,6 @@
     toastEl.classList.add('show');
     setTimeout(()=>toastEl.classList.remove('show'), 2000);
   }
-  // manual test
   window.addEventListener('keydown', e => { if((e.key||'').toLowerCase()==='t') showToast(); });
 
   async function loadConfig(){
@@ -121,25 +122,17 @@
       const res = await fetch('./config.json', {cache:'no-store'});
       if(!res.ok) return;
       const cfg = await res.json();
-      if (cfg && typeof cfg === 'object'){
-        if (cfg.rates && typeof cfg.rates === 'object' && Object.keys(cfg.rates).length){
-          RATES = cfg.rates;
-          const first = Object.keys(RATES)[0];
-          RATE_PER_KM = Number(RATES[first]) || RATE_PER_KM;
-        }
-        if (typeof cfg.gst === 'number') GST_PERCENT = cfg.gst;
-        if (typeof cfg.freeKm === 'number') FREE_KM = cfg.freeKm;
-      }
-    }catch(e){
-      console.warn('Config not found or invalid; using defaults.', e);
-    }
+      if (cfg.rates){ RATES = cfg.rates; RATE_PER_KM = Number(Object.values(RATES)[0]) || RATE_PER_KM; }
+      if (typeof cfg.gst === 'number') GST_PERCENT = cfg.gst;
+      if (typeof cfg.freeKm === 'number') FREE_KM = cfg.freeKm;
+      if (typeof cfg.slTriggerKm === 'number') SL_TRIGGER_KM = cfg.slTriggerKm;
+      if (typeof cfg.graceKm === 'number') GRACE_KM = cfg.graceKm;
+    }catch(e){ console.warn('Config not found or invalid; using defaults.', e); }
   }
 
-  // ===== Rate control as a Mapbox control (to the left of geocoder) =====
   function createRateControl(){
     class RateControl {
       onAdd(map){
-        this._map = map;
         const container = document.createElement('div');
         container.className = 'mapboxgl-ctrl rate-ctrl';
         const label = document.createElement('label'); label.textContent = 'Rate:';
@@ -153,23 +146,19 @@
         });
         sel.addEventListener('change', ()=>{
           RATE_PER_KM = parseFloat(sel.value);
-          refreshCostsFromStored(); // update UI live
+          refreshCostsFromStored();
           showToast(`Rate → ${RATE_PER_KM.toFixed(2)}/km ex GST`);
         });
         container.appendChild(label);
         container.appendChild(sel);
-
-        // Place just before geocoder in top-right corner
         setTimeout(()=>{
           const corner = document.querySelector('.mapboxgl-ctrl-top-right');
           const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
           if(corner && geocoder){ corner.insertBefore(container, geocoder); }
         },0);
-
-        this._container = container;
         return container;
       }
-      onRemove(){ if(this._container?.parentNode) this._container.parentNode.removeChild(this._container); this._map=undefined; }
+      onRemove(){ this._container?.remove(); }
     }
     return new RateControl();
   }
@@ -196,18 +185,15 @@
     });
   }
 
-  async function getDriving(fromLngLat,toLngLat){
-    const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${fromLngLat[0]},${fromLngLat[1]};${toLngLat[0]},${toLngLat[1]}?overview=full&geometries=geojson&access_token=${MAPBOX_TOKEN}`;
-    const res=await fetch(url);
-    if(!res.ok) throw new Error(`Directions HTTP ${res.status}`);
-    const json=await res.json();
-    const route=json.routes && json.routes[0];
-    if(!route) throw new Error('No route');
-    return { km:route.distance/1000, minutes:route.duration/60, geometry:route.geometry };
+  async function getDriving(from,to){
+    const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=full&geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+    const res=await fetch(url); const j=await res.json();
+    const r=j.routes?.[0]; if(!r) throw new Error('No route');
+    return { km:r.distance/1000, minutes:r.duration/60, geometry:r.geometry };
   }
 
   function serviceChips(p){
-    const base = ['CCTV','Alarm','Access Control','Install','Service'].map(k=>{
+    const base=['CCTV','Alarm','Access Control','Install','Service'].map(k=>{
       const val = yn(p[k]);
       const color = val ? '#16a34a' : '#dc2626';
       const bg    = val ? '#dcfce7' : '#fee2e2';
@@ -245,7 +231,6 @@
     });
     map.setLayoutProperty(id, 'visibility', geometry ? 'visible' : 'none');
   }
-
   function removeAltRoutes(map){
     ALT_COLORS.forEach((_,i)=>{
       const id=`route-alt-${i}`;
@@ -254,22 +239,20 @@
     });
   }
 
-  // AU state abbreviation from geocoder (e.g., AU-VIC -> VIC)
   function getAUStateAbbrevFromGeocoder(result){
     const parts = (result && result.context) || [];
     const region = parts.find(p => (p.id||'').startsWith('region.'));
-    const sc = region && region.short_code; // "AU-VIC"
+    const sc = region && region.short_code;
     if(sc && sc.toUpperCase().startsWith('AU-')) return sc.slice(3).toUpperCase();
     return null;
   }
 
-  // Nearest POR in same state if available; else absolute nearest
   function nearestInStateOrFallback(coord, feats, stateAbbrev){
     const from = turf.point(coord);
     const byDist = (a,b)=>a.km-b.km;
 
     const inState = feats
-      .filter(f => String(f.properties.State).toUpperCase() === stateAbbrev)
+      .filter(f => String(f.properties.State).toUpperCase() === (stateAbbrev||'').toUpperCase())
       .map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})}))
       .sort(byDist);
 
@@ -279,7 +262,6 @@
     return {feature: all[0].feature, km: all[0].km, usedFallback:true};
   }
 
-  // Alternates by straight-line distance
   function alternatesSorted(coord, feats, excludeId){
     const from = turf.point(coord);
     return feats
@@ -289,50 +271,30 @@
       .slice(0, ALT_COUNT);
   }
 
-  // Fit viewport to include query + nearest + any open alternates
-  function updateFitBounds(map, queryCoord, nearestCoord, altCoords){
-    const b = new mapboxgl.LngLatBounds();
-    if(queryCoord) b.extend(queryCoord);
-    if(nearestCoord) b.extend(nearestCoord);
-    (altCoords||[]).forEach(c=>b.extend(c));
-    if(!b.isEmpty()) map.fitBounds(b,{padding:80,maxZoom:10});
-  }
-
-  // Store refs for UI updates
-  const altPopups = {};              // layerId => popup
+  const altPopups = {};
   let nearestPopup = null;
   let queryCoordGlobal = null;
   let nearestCoordGlobal = null;
-  const activeAltCoords = new Map(); // layerId -> [lng,lat]
+  const activeAltCoords = new Map();
 
   function refreshCostsFromStored(){
-    // Nearest
     const km = Number(statusEl?.dataset?.nearestKm || NaN);
-    const within50 = !isNaN(km) && km <= FREE_KM;
+    const within = !isNaN(km) && km <= FREE_KM; // if we stored FREE_KM on purpose, this stays within
+    let cost = 0;
     if(!isNaN(km)){
-      let cost = 0;
-      if(!within50){
+      if(!within){
         const chargeable = Math.max(0, km - FREE_KM);
         cost = chargeable * 2 * RATE_PER_KM * gstFactor();
       }
-      const costEl = document.getElementById('nearest-cost');
-      if(costEl) costEl.textContent = money(cost);
+      const costEl=document.getElementById('nearest-cost');
+      if(costEl) costEl.textContent=money(cost);
     }
-    // Update displayed rate labels
-    document.querySelectorAll('.rate-label').forEach(el=>{
-      el.textContent = `(${money(RATE_PER_KM)} / km ex GST)`;
-    });
-    // Alternates
+    document.querySelectorAll('.rate-label').forEach(el=>{ el.textContent=`(${money(RATE_PER_KM)} / km ex GST)`; });
     document.querySelectorAll('.alt-cost').forEach(span=>{
-      const akm = Number(span.dataset.km);
-      if(isNaN(akm)) return;
-      const altWithin50 = akm <= FREE_KM;
-      let acost = 0;
-      if(!altWithin50){
-        const chargeable = Math.max(0, akm - FREE_KM);
-        acost = chargeable * 2 * RATE_PER_KM * gstFactor();
-      }
-      span.textContent = money(acost);
+      const akm=Number(span.dataset.km); if(isNaN(akm)) return;
+      const altWithin = akm <= FREE_KM;
+      let acost=0; if(!altWithin){ const ch=Math.max(0, akm-FREE_KM); acost=ch*2*RATE_PER_KM*gstFactor(); }
+      span.textContent=money(acost);
     });
   }
 
@@ -341,46 +303,22 @@
 
     setStatus('Initialising map…');
     mapboxgl.accessToken = MAPBOX_TOKEN;
-
-    const map = new mapboxgl.Map({
-      container:'map', style:'mapbox://styles/mapbox/streets-v12',
-      center:[144.9631,-37.8136], zoom:6
-    });
+    const map = new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/streets-v12',center:[144.96,-37.81],zoom:6});
     map.addControl(new mapboxgl.NavigationControl(),'bottom-right');
 
-    // Geocoder control
-    let gc=null;
-    if(window.MapboxGeocoder){
-      gc=new MapboxGeocoder({
-        accessToken: MAPBOX_TOKEN,
-        mapboxgl,
-        marker:false,
-        placeholder:'Search address or postcode…',
-        countries: COUNTRIES
-      });
-      map.addControl(gc,'top-right');
-    }
-
-    // Rate control
+    let gc=new MapboxGeocoder({accessToken:MAPBOX_TOKEN,mapboxgl,marker:false,placeholder:'Search address or postcode…',countries:COUNTRIES});
+    map.addControl(gc,'top-right');
     map.addControl(createRateControl(),'top-right');
 
-    // Load CSV
-    setStatus('Loading <code>data.csv</code>…');
-    const rows = await loadCSV(CSV_URL);
-    if(!rows || !rows.length) throw new Error('data.csv loaded but has 0 rows');
+    const rows=await loadCSV(CSV_URL);
+    const feats=rows.map((r,i)=>rowToFeature(r,i)).filter(Boolean);
 
-    const feats=[]; let id=1;
-    for(const r of rows){ const f=rowToFeature(r,id++); if(f) feats.push(f); }
-    if(!feats.length) throw new Error('Parsed 0 pins (check Lat/Lng and headers)');
-
-    // Toast on page load only
     showToast('C.C.');
 
     function ensurePointLayer(){
       if(!map.getSource('query-point')){
         map.addSource('query-point',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-        map.addLayer({id:'query-point',type:'circle',source:'query-point',
-          paint:{'circle-radius':5,'circle-color':'#111827','circle-stroke-color':'#fff','circle-stroke-width':1}});
+        map.addLayer({id:'query-point',type:'circle',source:'query-point',paint:{'circle-radius':5,'circle-color':'#111827','circle-stroke-color':'#fff','circle-stroke-width':1}});
       }
     }
 
@@ -388,7 +326,6 @@
       try{
         ensurePointLayer();
 
-        // Clear previous
         addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
         Object.values(altPopups).forEach(p => p.remove());
         for (const k in altPopups) delete altPopups[k];
@@ -396,30 +333,59 @@
         removeAltRoutes(map);
         activeAltCoords.clear();
 
-        // Query point
-        map.getSource('query-point').setData({
-          type:'FeatureCollection',
-          features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]
-        });
+        map.getSource('query-point').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]});
         queryCoordGlobal = coord;
 
-        // Nearest (state-restricted, fallback allowed)
-        const nearestSel = nearestInStateOrFallback(coord, feats, stateAbbrev);
-        const nearest = nearestSel.feature;
-        let slKm = nearestSel.km;
+        // Pick nearest (state-preferred)
+        const pick = nearestInStateOrFallback(coord, feats, stateAbbrev);
+        const nearest = pick.feature;
+        const slKm = pick.km; // straight-line km
 
-        // Compute route: only call Directions if > 50 km
-        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, mode='straight', routeGeom=null;
-        if(slKm>FREE_KM){
+        // Decision: only call Directions when straight-line > trigger
+        let within = false;
+        let useRoad = false;
+        let km=slKm;
+        let mins=(slKm/AVG_SPEED_KPH)*60;
+        let modeLabel='straight-line';
+        let routeGeom=null;
+
+        if (slKm <= SL_TRIGGER_KM) {
+          // Clearly inside: no route call, within
+          within = true;
+        } else {
+          // Edge zone: check road distance once
           try{
-            const r=await getDriving(coord,nearest.geometry.coordinates);
-            km=r.km; mins=r.minutes; mode='driving'; routeGeom=r.geometry;
-          }catch(err){ console.warn('Nearest directions failed; using straight-line',err); }
+            const r = await getDriving(coord, nearest.geometry.coordinates);
+            km   = r.km;
+            mins = r.minutes;
+            routeGeom = r.geometry;
+            useRoad   = true;
+
+            const roadGraceLimit = FREE_KM + GRACE_KM; // e.g. 65
+            within = km <= roadGraceLimit;
+
+            if (!within) {
+              modeLabel = 'road'; // we'll present road when outside
+            } else {
+              // Invisible grace: we still act as "within", but keep straight-line display & no route line
+              km = slKm;           // back to straight-line for display & dataset
+              mins = (slKm/AVG_SPEED_KPH)*60;
+              routeGeom = null;
+              useRoad = false;
+              modeLabel = 'straight-line';
+            }
+          }catch(e){
+            console.warn('Directions failed; fallback to straight-line', e);
+            within = slKm <= FREE_KM; // fallback decision
+          }
         }
-        if(!routeGeom){
-          routeGeom={type:'LineString',coordinates:[coord,nearest.geometry.coordinates]};
+
+        // Draw route only when outside (or when we actually used road)
+        if (!within && routeGeom) {
+          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
+        } else {
+          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
         }
-        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
         nearestCoordGlobal = nearest.geometry.coordinates;
 
         // Popup on nearest
@@ -428,53 +394,27 @@
           .setHTML(buildPopupHTML(nearest.properties))
           .addTo(map);
 
-        const within50 = km<=FREE_KM;
-        const badgeClass = within50 ? 'ok' : 'warn';
-        const badgeText  = within50 ? 'Within 50 km' : 'Outside 50 km';
-        const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
+        // Badges / cost
+        const badgeClass = within ? 'ok' : 'warn';
+        const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
+        const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
-        // Accommodation pill: only when Outside 50 AND (km >= 250 OR mins >= 150) one-way
-        const accomFlag = (!within50) && (km >= 250 || mins >= 150);
-
-        // Cost (Nearest)
         let travelCost = 0;
-        if(!within50){
-          const chargeableKm = Math.max(0, km - FREE_KM);
-          travelCost = chargeableKm * 2 * RATE_PER_KM * gstFactor();
+        if(!within){
+          const kmRoad = useRoad ? km : slKm; // km holds straight-line if within; outside should be road already
+          const chargeable = Math.max(0, kmRoad - FREE_KM);
+          travelCost = chargeable * 2 * RATE_PER_KM * gstFactor();
         }
 
         const p=nearest.properties;
-        const modeLabel = mode==='driving' ? 'road' : 'straight-line';
         const chipsHTML = serviceChips(p);
 
-        // Alternates (straight-line sorted)
-        const alts = alternatesSorted(coord, feats, nearest.id);
-        const altHtml = alts.map((a, i) => {
-          const pf = a.feature.properties;
-          const altWithin = a.slKm <= FREE_KM;
-          const cls = altWithin ? 'ok':'warn';
-          const txt = altWithin ? 'Within 50 km' : 'Outside 50 km';
-          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev).toUpperCase();
-          return `
-            <details class="alt" data-alt-index="${i}">
-              <summary>
-                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
-                <span class="pill ${cls}">${txt}</span>
-                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
-                <span class="pill warn accom-pill" style="display:none">Accommodation may be required - Check with SDC</span>
-              </summary>
-              <div class="alt-body" style="display:none"></div>
-            </details>
-          `;
-        }).join('');
-
-        // Status panel
+        // Status UI
         setStatus(`
           <div class="row">
             <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
             <div class="pill ${badgeClass}">${badgeText}</div>
             ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
-            ${accomFlag ? `<div class="pill warn">Accommodation may be required - Check with SDC</div>` : ``}
           </div>
           <div class="row">
             <div class="pill"><b>Distance (One Way):</b> ${km.toFixed(1)} km <span class="muted">(${modeLabel})</span></div>
@@ -489,13 +429,36 @@
           ${(p.Notes && String(p.Notes).trim())
             ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
             : ``}
-          ${altHtml ? `<div class="row" style="margin-top:6px"><b>Alternates:</b></div>${altHtml}` : ''}
+          <div class="row" style="margin-top:6px"><b>Alternates:</b></div>
         `);
 
-        // Store nearest km for live rate changes
-        statusEl.dataset.nearestKm = String(km);
+        // Store a safe km for live rate updates:
+        // - If within (even by grace), store FREE_KM to keep cost $0 on dropdown changes
+        // - If outside, store the road km we used to compute cost
+        statusEl.dataset.nearestKm = String(within ? FREE_KM : km);
 
-        // Attach alternate handlers
+        // Alternates list (unchanged: still lazy, route on expand)
+        const alts = alternatesSorted(coord, feats, nearest.id);
+        const altHtml = alts.map((a, i) => {
+          const pf = a.feature.properties;
+          const altWithin = a.slKm <= FREE_KM;
+          const cls = altWithin ? 'ok':'warn';
+          const txt = altWithin ? 'Within 50 km' : 'Outside 50 km';
+          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+          return `
+            <details class="alt" data-alt-index="${i}">
+              <summary>
+                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
+                <span class="pill ${cls}">${txt}</span>
+                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
+              </summary>
+              <div class="alt-body" style="display:none"></div>
+            </details>
+          `;
+        }).join('');
+        const holder=document.createElement('div'); holder.innerHTML=altHtml;
+        statusEl.appendChild(holder);
+
         document.querySelectorAll('details.alt').forEach((el)=>{
           const idx = Number(el.dataset.altIndex);
           const alt  = alts[idx];
@@ -510,7 +473,6 @@
 
           el.addEventListener('toggle', async ()=>{
             const body = el.querySelector('.alt-body');
-
             if(el.open){
               if(el.dataset.loaded !== '1'){
                 let akm = alt.slKm;
@@ -522,19 +484,13 @@
                 if(alt.slKm > FREE_KM){
                   try{
                     const r = await getDriving(coord, lngLat);
-                    akm = r.km; amins = r.minutes; amode = 'driving';
-                    ageom = r.geometry;
+                    akm = r.km; amins = r.minutes; amode = 'driving'; ageom = r.geometry;
                   }catch(e){ console.warn('Alt directions failed; using straight-line'); }
                 }
                 if(akm > FREE_KM){
                   const chargeable = Math.max(0, akm - FREE_KM);
                   acost = chargeable * 2 * RATE_PER_KM * gstFactor();
                 }
-
-                const altWithin50 = akm <= FREE_KM;
-                const accom = (!altWithin50) && (akm >= 250 || amins >= 150);
-                const pill = el.querySelector('.accom-pill');
-                if(pill) pill.style.display = accom ? 'inline-block' : 'none';
 
                 const chips = serviceChips(pf);
                 body.style.display='block';
@@ -557,35 +513,40 @@
               const geom = JSON.parse(el.dataset.geom);
               addOrUpdateLine(map, layerId, color, geom);
 
-              // Open popup on that pin
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
                 .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
               altPopups[layerId] = popup;
 
-              // Include in viewport
               activeAltCoords.set(layerId, lngLat);
-              updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
-
+              const b=new mapboxgl.LngLatBounds();
+              b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+              [...activeAltCoords.values()].forEach(c=>b.extend(c));
+              map.fitBounds(b,{padding:80,maxZoom:10});
             }else{
               addOrUpdateLine(map, layerId, color, null);
               if(altPopups[layerId]){ altPopups[layerId].remove(); delete altPopups[layerId]; }
               activeAltCoords.delete(layerId);
-              updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, [...activeAltCoords.values()]);
+              const b=new mapboxgl.LngLatBounds();
+              b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+              [...activeAltCoords.values()].forEach(c=>b.extend(c));
+              map.fitBounds(b,{padding:80,maxZoom:10});
             }
-          }, {once:false});
+          });
         });
 
-        // Initial fit: query + nearest
-        updateFitBounds(map, queryCoordGlobal, nearestCoordGlobal, []);
+        // Fit to query + nearest (and any open alts—none yet)
+        const b=new mapboxgl.LngLatBounds();
+        b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+        map.fitBounds(b,{padding:80,maxZoom:10});
+
       }catch(e){
         console.error(e);
         setStatus(`❌ Nearest calc error: ${e.message}`);
       }
     }
 
-    // ===== Map on load: add pins, rings, listeners =====
-    map.on('load', () => {
-      // Pins
+    // ==== Map load: pins, rings, and geocoder wiring ====
+    map.on('load', ()=>{
       const fcPins={type:'FeatureCollection',features:feats};
       map.addSource('pins',{type:'geojson',data:fcPins});
       map.addLayer({id:'pins',type:'circle',source:'pins',
@@ -594,13 +555,10 @@
       map.on('mouseleave','pins',()=>map.getCanvas().style.cursor='');
       map.on('click','pins', e=>{
         const p=e.features[0].properties;
-        new mapboxgl.Popup({offset:12})
-          .setLngLat(e.features[0].geometry.coordinates)
-          .setHTML(buildPopupHTML(p))
-          .addTo(map);
+        new mapboxgl.Popup({offset:12}).setLngLat(e.features[0].geometry.coordinates).setHTML(buildPopupHTML(p)).addTo(map);
       });
 
-      // 50 km circles (Circle50 == true/yes)
+      // 50 km circles
       const rings = feats
         .filter(f => (String(f.properties.Circle50||'').toLowerCase()==='true' || yn(f.properties.Circle50)))
         .map(f => turf.circle(f.geometry.coordinates, FREE_KM, {steps:64, units:'kilometers'}));
@@ -608,32 +566,32 @@
       map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
       map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
 
-      // Fit to all pins initially
+      // initial view over pins
       const b=new mapboxgl.LngLatBounds(); feats.forEach(f=>b.extend(f.geometry.coordinates));
       if(!b.isEmpty()) map.fitBounds(b,{padding:60});
-      setStatus(`Done. Loaded <b>${feats.length}</b> pins from <code>${CSV_URL}</code>. Use the search box (Australia only) to calculate distance/time/cost.`);
 
-      if(gc){
-        gc.on('result', e => {
-          const center = e?.result?.center;
-          const stateAbbrev = getAUStateAbbrevFromGeocoder(e?.result) || '';
-          if (center) showNearestFrom(center, stateAbbrev);
-        });
-        gc.on('clear', () => {
-          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
-          Object.values(altPopups).forEach(p => p.remove());
-          for (const k in altPopups) delete altPopups[k];
-          removeAltRoutes(map);
-          if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
-          activeAltCoords.clear();
-          if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
-          setStatus('Cleared.');
-        });
-      }
+      // Geocoder events
+      gc.on('result', e => {
+        const center = e?.result?.center;
+        const stateAbbrev = getAUStateAbbrevFromGeocoder(e?.result) || '';
+        if (center) showNearestFrom(center, stateAbbrev);
+      });
+      gc.on('clear', () => {
+        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
+        Object.values(altPopups).forEach(p => p.remove());
+        for (const k in altPopups) delete altPopups[k];
+        removeAltRoutes(map);
+        if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
+        activeAltCoords.clear();
+        if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
+        setStatus('Cleared.');
+      });
+
+      setStatus(`Ready. Loaded <b>${feats.length}</b> PORs from <code>${CSV_URL}</code>. Search anywhere in Australia to calculate nearest and alternates.`);
     });
   }
 
-  main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}<br>Check that <code>${CSV_URL}</code> exists next to this file.`); });
+  main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
 })();
 </script>
 </body>
