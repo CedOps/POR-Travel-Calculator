@@ -20,7 +20,6 @@
   #status{
     position:fixed;left:8px;top:8px;z-index:1000;background:#fff;border:1px solid #e5e7eb;border-radius:12px;
     padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:820px;
-    pointer-events:auto;
   }
   #status .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0}
   #status .pill{border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px}
@@ -91,8 +90,8 @@
   let RATE_PER_KM = 2.08;  // ex GST
   let GST_PERCENT = 0.10;
   let FREE_KM     = 50;
-  let SL_TRIGGER_KM = 35;  // new
-  let GRACE_KM    = 15;    // new (invisible)
+  let SL_TRIGGER_KM = 35;  // start road check when SL > 35 km
+  let GRACE_KM    = 15;    // invisible grace on road distance
 
   const MAPBOX_TOKEN = "pk.eyJ1IjoibWVpc3RlcmciLCJhIjoiY21mbWZ3MWljMDFmZzJsb2UyNzlvanhwdiJ9.ABrCTCsLUIcU0R7bXv_GbA";
   const CSV_URL      = "data.csv";
@@ -110,7 +109,6 @@
   const gstFactor = () => 1 + GST_PERCENT;
 
   function showToast(msg='C.C.'){
-    if(!toastEl) return;
     toastEl.textContent = msg;
     toastEl.classList.add('show');
     setTimeout(()=>toastEl.classList.remove('show'), 2000);
@@ -279,7 +277,7 @@
 
   function refreshCostsFromStored(){
     const km = Number(statusEl?.dataset?.nearestKm || NaN);
-    const within = !isNaN(km) && km <= FREE_KM; // if we stored FREE_KM on purpose, this stays within
+    const within = !isNaN(km) && km <= FREE_KM;
     let cost = 0;
     if(!isNaN(km)){
       if(!within){
@@ -336,80 +334,102 @@
         map.getSource('query-point').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]});
         queryCoordGlobal = coord;
 
-        // Pick nearest (state-preferred)
+        // Nearest: state-preferred, then edge-zone check with invisible grace
         const pick = nearestInStateOrFallback(coord, feats, stateAbbrev);
         const nearest = pick.feature;
-        const slKm = pick.km; // straight-line km
+        const slKm = pick.km;
 
-        // Decision: only call Directions when straight-line > trigger
         let within = false;
-        let useRoad = false;
-        let km=slKm;
-        let mins=(slKm/AVG_SPEED_KPH)*60;
-        let modeLabel='straight-line';
-        let routeGeom=null;
+        let km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, usedRoad=false;
 
         if (slKm <= SL_TRIGGER_KM) {
-          // Clearly inside: no route call, within
-          within = true;
+          within = true; // clearly within
         } else {
-          // Edge zone: check road distance once
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
-            km   = r.km;
-            mins = r.minutes;
-            routeGeom = r.geometry;
-            useRoad   = true;
-
-            const roadGraceLimit = FREE_KM + GRACE_KM; // e.g. 65
-            within = km <= roadGraceLimit;
-
-            if (!within) {
-              modeLabel = 'road'; // we'll present road when outside
+            const roadKm = r.km; const roadMin = r.minutes;
+            if (roadKm <= FREE_KM + GRACE_KM) {
+              // Invisible grace → still within; keep SL display
+              within = true;
+              km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; usedRoad=false; modeLabel='straight-line';
             } else {
-              // Invisible grace: we still act as "within", but keep straight-line display & no route line
-              km = slKm;           // back to straight-line for display & dataset
-              mins = (slKm/AVG_SPEED_KPH)*60;
-              routeGeom = null;
-              useRoad = false;
-              modeLabel = 'straight-line';
+              within = false;
+              km = roadKm; mins = roadMin; routeGeom = r.geometry; usedRoad=true; modeLabel='road';
             }
           }catch(e){
-            console.warn('Directions failed; fallback to straight-line', e);
-            within = slKm <= FREE_KM; // fallback decision
+            console.warn('Nearest Directions failed; fallback to SL', e);
+            within = slKm <= FREE_KM;
           }
         }
 
-        // Draw route only when outside (or when we actually used road)
-        if (!within && routeGeom) {
-          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
-        } else {
-          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
-        }
+        if (!within && routeGeom) addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
+        else addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
         nearestCoordGlobal = nearest.geometry.coordinates;
 
-        // Popup on nearest
         nearestPopup = new mapboxgl.Popup({offset:12, closeOnClick:false})
           .setLngLat(nearest.geometry.coordinates)
           .setHTML(buildPopupHTML(nearest.properties))
           .addTo(map);
 
-        // Badges / cost
         const badgeClass = within ? 'ok' : 'warn';
         const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
         const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
         let travelCost = 0;
         if(!within){
-          const kmRoad = useRoad ? km : slKm; // km holds straight-line if within; outside should be road already
-          const chargeable = Math.max(0, kmRoad - FREE_KM);
+          const chargeable = Math.max(0, km - FREE_KM);
           travelCost = chargeable * 2 * RATE_PER_KM * gstFactor();
         }
 
         const p=nearest.properties;
         const chipsHTML = serviceChips(p);
 
-        // Status UI
+        // ===== Alternates: precheck edge-zone (35–50 km SL), else lazy =====
+        const alts = alternatesSorted(coord, feats, nearest.id);
+
+        // Precompute road checks for alternates in edge-zone
+        const altCache = {}; // idx -> { prechecked, outside, km, mins, geom }
+        await Promise.all(alts.map(async (a, i) => {
+          if (a.slKm > SL_TRIGGER_KM && a.slKm <= FREE_KM) {
+            try{
+              const r = await getDriving(coord, a.feature.geometry.coordinates);
+              const roadKm = r.km, roadMin = r.minutes;
+              const outside = roadKm > (FREE_KM + GRACE_KM);
+              altCache[i] = { prechecked:true, outside, km:roadKm, mins:roadMin, geom:r.geometry };
+            }catch(e){
+              console.warn('Alt precheck failed; will lazy on expand', e);
+              altCache[i] = { prechecked:false };
+            }
+          } else {
+            altCache[i] = { prechecked:false }; // clearly inside (<=35) or far outside (>50): no precheck
+          }
+        }));
+
+        const altHtml = alts.map((a, i) => {
+          const pf = a.feature.properties;
+          const cache = altCache[i] || {prechecked:false};
+          // Determine pill based on precheck (if any) or SL
+          let withinAlt;
+          if (cache.prechecked) {
+            withinAlt = !cache.outside; // if prechecked and not outside → within
+          } else {
+            withinAlt = a.slKm <= FREE_KM; // fallback to SL
+          }
+          const cls = withinAlt ? 'ok':'warn';
+          const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
+          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+          return `
+            <details class="alt" data-alt-index="${i}">
+              <summary>
+                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
+                <span class="pill ${cls}">${txt}</span>
+                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
+              </summary>
+              <div class="alt-body" style="display:none"></div>
+            </details>
+          `;
+        }).join('');
+
         setStatus(`
           <div class="row">
             <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
@@ -429,36 +449,13 @@
           ${(p.Notes && String(p.Notes).trim())
             ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
             : ``}
-          <div class="row" style="margin-top:6px"><b>Alternates:</b></div>
+          ${altHtml ? `<div class="row" style="margin-top:6px"><b>Alternates:</b></div>${altHtml}` : ''}
         `);
 
-        // Store a safe km for live rate updates:
-        // - If within (even by grace), store FREE_KM to keep cost $0 on dropdown changes
-        // - If outside, store the road km we used to compute cost
+        // Store nearest km for rate dropdown refresh
         statusEl.dataset.nearestKm = String(within ? FREE_KM : km);
 
-        // Alternates list (unchanged: still lazy, route on expand)
-        const alts = alternatesSorted(coord, feats, nearest.id);
-        const altHtml = alts.map((a, i) => {
-          const pf = a.feature.properties;
-          const altWithin = a.slKm <= FREE_KM;
-          const cls = altWithin ? 'ok':'warn';
-          const txt = altWithin ? 'Within 50 km' : 'Outside 50 km';
-          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
-          return `
-            <details class="alt" data-alt-index="${i}">
-              <summary>
-                <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
-                <span class="pill ${cls}">${txt}</span>
-                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
-              </summary>
-              <div class="alt-body" style="display:none"></div>
-            </details>
-          `;
-        }).join('');
-        const holder=document.createElement('div'); holder.innerHTML=altHtml;
-        statusEl.appendChild(holder);
-
+        // Wire alt toggles
         document.querySelectorAll('details.alt').forEach((el)=>{
           const idx = Number(el.dataset.altIndex);
           const alt  = alts[idx];
@@ -466,6 +463,7 @@
           const layerId = `route-alt-${idx}`;
           const color   = ALT_COLORS[idx % ALT_COLORS.length];
           const lngLat  = alt.feature.geometry.coordinates;
+          const cache   = altCache[idx] || {prechecked:false};
 
           if(!map.getSource(layerId)){
             addOrUpdateLine(map, layerId, color, null);
@@ -473,55 +471,69 @@
 
           el.addEventListener('toggle', async ()=>{
             const body = el.querySelector('.alt-body');
+
             if(el.open){
-              if(el.dataset.loaded !== '1'){
-                let akm = alt.slKm;
-                let amins = (akm/AVG_SPEED_KPH)*60;
-                let amode = 'straight';
-                let acost = 0;
-                let ageom = {type:'LineString',coordinates:[coord, lngLat]};
+              // Fill body using cache (if prechecked) or fetch lazily
+              let akm, amins, amode='straight', ageom=null, outside=false;
 
-                if(alt.slKm > FREE_KM){
-                  try{
-                    const r = await getDriving(coord, lngLat);
-                    akm = r.km; amins = r.minutes; amode = 'driving'; ageom = r.geometry;
-                  }catch(e){ console.warn('Alt directions failed; using straight-line'); }
+              if (cache.prechecked) {
+                // We already know road result (outside=true means road > 65)
+                if (cache.outside) {
+                  akm = cache.km; amins = cache.mins; amode='driving'; ageom=cache.geom; outside=true;
+                } else {
+                  // within (via grace or actually inside): keep SL display, no line
+                  akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ageom=null;
                 }
-                if(akm > FREE_KM){
-                  const chargeable = Math.max(0, akm - FREE_KM);
-                  acost = chargeable * 2 * RATE_PER_KM * gstFactor();
+              } else if (alt.slKm > FREE_KM) {
+                // Clearly outside by SL → fetch on demand
+                try{
+                  const r = await getDriving(queryCoordGlobal, lngLat);
+                  akm=r.km; amins=r.minutes; amode='driving'; ageom=r.geometry; outside=true;
+                }catch(e){
+                  console.warn('Alt Directions failed; fallback to SL', e);
+                  akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=akm>FREE_KM; ageom=null;
                 }
-
-                const chips = serviceChips(pf);
-                body.style.display='block';
-                body.innerHTML = `
-                  <div class="row">
-                    <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
-                    <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
-                    <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
-                  </div>
-                  <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
-                  <div class="row chips">${chips}</div>
-                  ${(pf.Notes && String(pf.Notes).trim())
-                    ? `<div class="row"><div><b>Notes:</b> ${String(pf.Notes).trim()}</div></div>`
-                    : ``}
-                `;
-                el.dataset.loaded='1';
-                el.dataset.geom = JSON.stringify(ageom);
+              } else {
+                // Clearly inside by SL (≤35) → within
+                akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ageom=null;
               }
 
-              const geom = JSON.parse(el.dataset.geom);
-              addOrUpdateLine(map, layerId, color, geom);
+              let acost=0;
+              if(outside){
+                const chargeable = Math.max(0, akm - FREE_KM);
+                acost = chargeable * 2 * RATE_PER_KM * gstFactor();
+              }
 
+              const chips = serviceChips(pf);
+              body.style.display='block';
+              body.innerHTML = `
+                <div class="row">
+                  <div class="pill"><b>Distance (One Way):</b> ${akm.toFixed(1)} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
+                  <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
+                  <div class="pill"><b>Travel Charge inc GST:</b> <span class="alt-cost" data-idx="${idx}" data-km="${akm.toFixed(3)}">${money(acost)}</span> <span class="muted rate-label">(${money(RATE_PER_KM)} / km ex GST)</span></div>
+                </div>
+                <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
+                <div class="row chips">${chips}</div>
+                ${(pf.Notes && String(pf.Notes).trim())
+                  ? `<div class="row"><div><b>Notes:</b> ${String(pf.Notes).trim()}</div></div>`
+                  : ``}
+              `;
+
+              // Draw/clear the line depending on outside
+              addOrUpdateLine(map, layerId, color, (outside && ageom) ? ageom : null);
+
+              // Popup for that pin
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
                 .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
               altPopups[layerId] = popup;
 
+              // Fit bounds with any open alternates
               activeAltCoords.set(layerId, lngLat);
               const b=new mapboxgl.LngLatBounds();
               b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
               [...activeAltCoords.values()].forEach(c=>b.extend(c));
               map.fitBounds(b,{padding:80,maxZoom:10});
+
             }else{
               addOrUpdateLine(map, layerId, color, null);
               if(altPopups[layerId]){ altPopups[layerId].remove(); delete altPopups[layerId]; }
@@ -534,7 +546,7 @@
           });
         });
 
-        // Fit to query + nearest (and any open alts—none yet)
+        // Fit to query + nearest initially
         const b=new mapboxgl.LngLatBounds();
         b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
         map.fitBounds(b,{padding:80,maxZoom:10});
