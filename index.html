@@ -430,9 +430,7 @@
           const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
           const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
-          const accomSummaryPill = (!withinAlt && cache.prechecked && cache.needsAccom)
-            ? `<span class="pill warn">Accommodation may be required – Check with SDC</span>`
-            : ``;
+          const accomNow = (!!cache.prechecked && !!cache.outside && !!cache.needsAccom);
 
           return `
             <details class="alt" data-alt-index="${i}">
@@ -440,7 +438,7 @@
                 <span>Alternate POR: ${pf.POR}, ${pf.State||''}</span>
                 <span class="pill ${cls}">${txt}</span>
                 ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
-                ${accomSummaryPill}
+                <span class="pill warn accom-pill" style="display:${accomNow ? 'inline-block' : 'none'}">Accommodation may be required – Check with SDC</span>
               </summary>
               <div class="alt-body" style="display:none"></div>
             </details>
@@ -513,6 +511,10 @@
               } else {
                 akm = alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false;
               }
+
+              // Update summary accommodation pill based on fresh info
+              const accomPill = el.querySelector('.accom-pill');
+              if (accomPill) accomPill.style.display = needsAccomAlt ? 'inline-block' : 'none';
 
               let acost=0;
               if(outside){
