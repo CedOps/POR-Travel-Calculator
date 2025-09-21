@@ -148,7 +148,7 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
-  function showToast(msg='C.C.'){ toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),2000); }
+  function showToast(msg='C.C.', duration=2000){ toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),duration); }
   window.addEventListener('keydown', e => { if((e.key||'').toLowerCase()==='t') showToast(); });
 
   async function loadConfig(){
@@ -573,7 +573,7 @@
         const copyBtnNearest = document.getElementById('copy-nearest');
         copyBtnNearest?.addEventListener('click', () => {
           navigator.clipboard.writeText(copyLine)
-            .then(()=> { showToast(`Copied to clipboard: ${copyLine}`); flashPulse(copyBtnNearest, 'Copied'); })
+            .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
             .catch(()=> showToast('Copy failed'));
         });
 
@@ -676,7 +676,7 @@
               copyBtnAlt?.addEventListener('click', () => {
                 navigator.clipboard.writeText(copyLineAlt)
                   .then(()=> {
-                    showToast(`Copied to clipboard: ${copyLineAlt}`);
+                    showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
                     if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
                     else { flashPulse(copyBtnAlt, 'Copied'); }
                   })
@@ -738,8 +738,8 @@
         const center=e?.result?.center;
         const stateAbbrev=getAUStateAbbrevFromGeocoder(e?.result)||'';
         // Build a concise label like "Suburb, STATE"
-        const suburb = (e?.result?.text || '').trim();
-        lastSearchLabel = suburb && stateAbbrev ? `${suburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
+        theSuburb = (e?.result?.text || '').trim();
+        lastSearchLabel = theSuburb && stateAbbrev ? `${theSuburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
         if(center) showNearestFrom(center, stateAbbrev);
       });
       geocoder.on('clear', () => {
