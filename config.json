@@ -1,6 +1,6 @@
 {
   "rates": {
-    "Default": 2.08,
+    "Standard ADT": 2.08,
     "Premium": 2.50,
     "Rural": 3.10
   },
@@ -9,3 +9,4 @@
   "slTriggerKm": 35,
   "graceKm": 15
 }
+
