@@ -127,8 +127,8 @@
   let RATE_PER_KM = 2.08;  // ex GST
   let GST_PERCENT = 0.10;
   let FREE_KM     = 50;
-  let SL_TRIGGER_KM = 35;
-  let GRACE_KM    = 15;
+  let SL_TRIGGER_KM = 35;  // skip Directions for very short SL distances
+  let GRACE_KM    = 15;    // grace only applies when SL is inside FREE_KM
 
   const ACCOM_KM  = 250;
   const ACCOM_MIN = 150;
@@ -148,7 +148,12 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
-  function showToast(msg='C.C.', duration=2000){ toastEl.textContent=msg; toastEl.classList.add('show'); setTimeout(()=>toastEl.classList.remove('show'),duration); }
+  // Toast helper: default 2s (CC), copy actions call with 4s
+  function showToast(msg='C.C.', duration=2000){
+    toastEl.textContent=msg;
+    toastEl.classList.add('show');
+    setTimeout(()=>toastEl.classList.remove('show'),duration);
+  }
   window.addEventListener('keydown', e => { if((e.key||'').toLowerCase()==='t') showToast(); });
 
   async function loadConfig(){
@@ -178,7 +183,7 @@
         });
         sel.addEventListener('change', ()=>{
           RATE_PER_KM=parseFloat(sel.value);
-          refreshCostsFromStored(); // recompute from stored rounded km
+          refreshCostsFromStored();
           showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
         });
         container.appendChild(label); container.appendChild(sel);
@@ -328,6 +333,14 @@
   let queryCoordGlobal = null;
   let nearestCoordGlobal = null;
   const activeAltCoords = new Map();
+  let initialBounds = null; // for clearing back to full-map
+
+  // Asymmetric padding so content isn't hidden under the left panel
+  function panelPadding(){
+    const w = (statusEl && statusEl.offsetWidth) ? statusEl.offsetWidth : 360;
+    const left = Math.min(Math.max(w + 20, 220), 520);
+    return { top: 80, right: 80, bottom: 80, left };
+  }
 
   function refreshCostsFromStored(){
     const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
@@ -422,9 +435,14 @@
 
         let within=false, km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, ferry=false;
 
+        // --- Correct grace logic ---
+        // 1) Very short SL: within, no directions call
         if (slKm <= SL_TRIGGER_KM) {
           within = true;
-        } else {
+          // km remains slKm
+        }
+        // 2) SL within free circle: check road with grace allowance
+        else if (slKm <= FREE_KM) {
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
             const roadKm=r.km, roadMin=r.minutes; ferry=!!r.ferry;
@@ -434,15 +452,26 @@
               within=false; km=roadKm; mins=roadMin; routeGeom=r.geometry; modeLabel='road';
             }
           }catch(e){
-            console.warn('Nearest Directions failed; fallback to SL', e);
-            within = slKm <= FREE_KM;
+            console.warn('Nearest Directions failed (inside circle); falling back to SL as within', e);
+            within = true; // inside circle → treat within if directions fail
+            km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
+          }
+        }
+        // 3) SL already outside free circle: NO GRACE, use road distance and charge
+        else {
+          try{
+            const r = await getDriving(coord, nearest.geometry.coordinates);
+            within=false; km=r.km; mins=r.minutes; routeGeom=r.geometry; modeLabel='road'; ferry=!!r.ferry;
+          }catch(e){
+            console.warn('Nearest Directions failed (outside circle); using SL but treating as outside', e);
+            within=false; km=slKm; mins=(slKm/AVG_SPEED_KPH)*60; routeGeom={type:'LineString',coordinates:[coord, nearest.geometry.coordinates]}; modeLabel='straight-line';
           }
         }
 
         // ROUND distance up (drives both display and cost)
         const kmRounded = Math.ceil(km);
 
-        // DRAW: road if outside; straight if within (or directions failed)
+        // DRAW: road if outside and we have geometry; otherwise draw straight line
         if (!within && routeGeom) {
           addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
         } else {
@@ -530,7 +559,7 @@
             ${ferry ? `<div class="pill warn">Ferry required – Check w SDC</div>` : ``}
           </div>
           <div class="row">
-            <div class="pill"><b>Distance (One Way):</b> ${kmRounded} km <span class="muted">(${modeLabel})</span></div>
+            <div class="pill"><b>Distance (One Way):</b> ${Math.ceil(km)} km <span class="muted">(${modeLabel})</span></div>
             <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
           </div>
           <div class="row">
@@ -557,7 +586,7 @@
         `);
 
         // store rounded km for later recalc on rate change
-        statusEl.dataset.nearestKm = String(kmRounded);
+        statusEl.dataset.nearestKm = String(Math.ceil(km));
 
         // Set pulse color to match the nearest cost pill
         const pulseNearest = document.getElementById('pulse-nearest');
@@ -566,16 +595,21 @@
           pulseNearest.classList.toggle('pulse-gray',  costClassNearest !== 'cost-pay');
         }
 
-        // Nearest COPY BUTTON
+        // Nearest COPY BUTTON (Copied toast = 4s)
         const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
         const searchLabel = lastSearchLabel || `Selected location`;
-        const copyLine = `Travel charges to ${searchLabel} from ${porLabel} – ${kmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(inc)} inc GST (${money(ex)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+        const copyLine = `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(inc)} inc GST (${money(ex)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
         const copyBtnNearest = document.getElementById('copy-nearest');
         copyBtnNearest?.addEventListener('click', () => {
           navigator.clipboard.writeText(copyLine)
             .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
-            .catch(()=> showToast('Copy failed'));
+            .catch(()=> showToast('Copy failed', 4000));
         });
+
+        // Fit bounds with asymmetric padding so left panel doesn't cover lines
+        const b=new mapboxgl.LngLatBounds();
+        b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+        map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
 
         // wire alternates
         document.querySelectorAll('details.alt').forEach((el)=>{
@@ -606,7 +640,7 @@
                   needsAccomAlt = (akm > ACCOM_KM || amins > ACCOM_MIN);
                   ferryAlt = !!r.ferry;
                 }catch(e){
-                  akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=akm>FREE_KM; ageom=null; ferryAlt=false; needsAccomAlt=false;
+                  akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=true; ageom={type:'LineString',coordinates:[queryCoordGlobal, lngLat]}; ferryAlt=false; needsAccomAlt=false;
                 }
               } else { akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ferryAlt=false; }
 
@@ -666,12 +700,12 @@
                 : { type:'LineString', coordinates:[queryCoordGlobal, lngLat] };
               addOrUpdateLine(map, layerId, color, geomToDraw);
 
-              // ALT COPY BUTTON
+              // ALT COPY BUTTON (Copied toast = 4s)
               const porLabelAlt = `${pf.POR || ''}, ${pf.State || ''}`.replace(/\s+,/g, ',').trim();
               const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
-              const lineContainer = copyBtnAlt?.parentElement; // holds the pulse span we just injected
+              const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
-              const copyLineAlt = `Travel charges to ${searchLabel} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+              const copyLineAlt = `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
 
               copyBtnAlt?.addEventListener('click', () => {
                 navigator.clipboard.writeText(copyLineAlt)
@@ -680,7 +714,7 @@
                     if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
                     else { flashPulse(copyBtnAlt, 'Copied'); }
                   })
-                  .catch(()=> showToast('Copy failed'));
+                  .catch(()=> showToast('Copy failed', 4000));
               });
 
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
@@ -691,7 +725,7 @@
               const b=new mapboxgl.LngLatBounds();
               b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
               [...activeAltCoords.values()].forEach(c=>b.extend(c));
-              map.fitBounds(b,{padding:80,maxZoom:10});
+              map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
 
             }else{
               addOrUpdateLine(map, layerId, color, null);
@@ -700,14 +734,10 @@
               const b=new mapboxgl.LngLatBounds();
               b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
               [...activeAltCoords.values()].forEach(c=>b.extend(c));
-              map.fitBounds(b,{padding:80,maxZoom:10});
+              map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
             }
           });
         });
-
-        const b=new mapboxgl.LngLatBounds();
-        b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
-        map.fitBounds(b,{padding:80,maxZoom:10});
 
       }catch(e){ console.error(e); setStatus(`❌ Nearest calc error: ${e.message}`); }
     }
@@ -731,15 +761,17 @@
       map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
       map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
 
-      const b=new mapboxgl.LngLatBounds(); feats.forEach(f=>b.extend(f.geometry.coordinates));
-      if(!b.isEmpty()) map.fitBounds(b,{padding:60});
+      // Initial fit to all pins (no special left padding)
+      const bAll=new mapboxgl.LngLatBounds(); feats.forEach(f=>bAll.extend(f.geometry.coordinates));
+      if(!bAll.isEmpty()) map.fitBounds(bAll,{padding:60});
+      initialBounds = bAll;
 
       geocoder.on('result', e => {
         const center=e?.result?.center;
         const stateAbbrev=getAUStateAbbrevFromGeocoder(e?.result)||'';
         // Build a concise label like "Suburb, STATE"
-        theSuburb = (e?.result?.text || '').trim();
-        lastSearchLabel = theSuburb && stateAbbrev ? `${theSuburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
+        const suburb = (e?.result?.text || '').trim();
+        lastSearchLabel = suburb && stateAbbrev ? `${suburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
         if(center) showNearestFrom(center, stateAbbrev);
       });
       geocoder.on('clear', () => {
@@ -752,9 +784,20 @@
         if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
         lastSearchLabel = '';
         setStatus('Cleared.');
+        // Refit to initial full map (no left padding because panel isn't covering anything important)
+        if(initialBounds && !initialBounds.isEmpty()) map.fitBounds(initialBounds,{padding:60});
       });
 
       setStatus(`Ready. Loaded <b>${feats.length}</b> PORs from <code>${CSV_URL}</code>. Search anywhere in Australia to calculate nearest and alternates.`);
+    });
+
+    // Refit on window resize to respect current panel width
+    window.addEventListener('resize', () => {
+      if(!queryCoordGlobal || !nearestCoordGlobal) return;
+      const b = new mapboxgl.LngLatBounds();
+      b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+      [...activeAltCoords.values()].forEach(c=>b.extend(c));
+      try{ map.fitBounds(b, { padding: panelPadding(), maxZoom: 10 }); }catch(_e){}
     });
   }
 
@@ -763,4 +806,3 @@
 </script>
 </body>
 </html>
-
