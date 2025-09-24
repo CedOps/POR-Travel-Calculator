@@ -745,8 +745,22 @@
     map.on('load', ()=>{
       const fcPins={type:'FeatureCollection',features:feats};
       map.addSource('pins',{type:'geojson',data:fcPins});
-      map.addLayer({id:'pins',type:'circle',source:'pins',
-        paint:{'circle-radius':6,'circle-color':'#2563eb','circle-stroke-color':'#fff','circle-stroke-width':1}});
+      map.addLayer({
+        id: 'pins',
+        type: 'circle',
+        source: 'pins',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': [
+            'case',
+            ['==', ['get', 'Category'], 'ADT'], '#2563eb',          // blue for ADT
+            ['==', ['get', 'Category'], 'Subcontractor'], '#ef4444', // red for Subcontractor
+            '#2563eb' // default to blue
+          ],
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 1
+        }
+      });
       map.on('mouseenter','pins',()=>map.getCanvas().style.cursor='pointer');
       map.on('mouseleave','pins',()=>map.getCanvas().style.cursor='');
       map.on('click','pins', e=>{
@@ -806,3 +820,4 @@
 </script>
 </body>
 </html>
+
