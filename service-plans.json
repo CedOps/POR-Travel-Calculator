@@ -1,0 +1,22 @@
+[
+  {
+    "plan": "Express Warranty",
+    "definition": "Express Warranty is only applicable for 12 months after installation. The warranty applies to parts and workmanship but only applies if the customer is not at fault. If the customer is at fault or an external factor has caused the fault (for example, bugs/webs, lightning strikes, water damage, etc) full charges apply (call out, labour and parts).\n\nCustomers should still be quoted both ways as it will be up to the technician on site to determine if the fault is warranty related.\n\nNote: If the issue occurs within three months of the installation the job needs to be raised as an Installation Recall. To do this raise a normal service job and change the Job Request to INRE - this job should be left in the open status."
+  },
+  {
+    "plan": "QSP (Extended Warranty)",
+    "definition": "Extended warranty coverage. Please refer to your contract for exact terms."
+  },
+  {
+    "plan": "Peace of Mind (POM)",
+    "definition": "Peace of Mind plans include additional servicing and support."
+  },
+  {
+    "plan": "Comprehensive Extended Warranty",
+    "definition": "Comprehensive extended warranty for selected equipment."
+  },
+  {
+    "plan": "Equipment Hire/Lease",
+    "definition": "Equipment is supplied as a hire or lease arrangement. Charges may apply for damage or loss."
+  }
+]
