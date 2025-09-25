@@ -160,50 +160,7 @@
     line-height: 1.5;
   }
   
-/* Modal styles */
-#service-plan-modal {
-  display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
-  background:rgba(16,23,38,0.32);z-index:1200;
-}
-#service-plan-modal .modal-content {
-  background:#fff;border-radius:12px;max-width:900px;
-  margin:60px auto;padding:16px 20px;box-shadow:0 4px 24px rgba(0,0,0,.20);
-  position:relative;
-}
-#close-service-plan {
-  position:absolute;top:16px;right:16px;
-  background:none;border:none;font-size:20px;
-  cursor:pointer;color:#374151;
-}
-#service-plan-content details {
-  background: #f7f7f7;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  margin-bottom: 8px;
-  padding: 0;
-}
-#service-plan-content summary {
-  font-size: 18px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 8px;
-}
-#service-plan-content details[open] summary {
-  border-bottom: 1px solid #e5e7eb;
-  background: #fcfcfc;
-}
-#service-plan-content details div {
-  padding: 12px 12px 10px 12px;
-  font-size: 15px;
-  color: #333;
-  line-height: 1.5;
-}
-.mapboxgl-ctrl.service-plan-ctrl {
-  margin-top: 8px;
-}
-#service-plan-btn {
-  min-width: 160px;
-}
+
   
 </style>
 </head>
@@ -252,6 +209,16 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
+  // Modal close wiring (safe: only binds if elements exist)
+  const modalEl = document.getElementById('service-plan-modal');
+  const closePlanBtn = document.getElementById('close-service-plan');
+  if (modalEl && closePlanBtn) {
+    closePlanBtn.addEventListener('click', () => { modalEl.style.display = 'none'; });
+    modalEl.addEventListener('click', (e) => {
+      if (e.target === modalEl) modalEl.style.display = 'none';
+    });
+  }
+  
   // Toast helper: default 2s (CC), copy actions call with 4s
   function showToast(msg='C.C.', duration=2000){
     toastEl.textContent=msg;
@@ -970,34 +937,7 @@ function createServicePlanButton(){
       try{ map.fitBounds(b, { padding: panelPadding(), maxZoom: 10 }); }catch(_e){}
     });
   }
-  
-// Modal logic for service plans (load from JSON, format with line breaks)
-const btn = document.getElementById('service-plan-btn');
-const modal = document.getElementById('service-plan-modal');
-const closeBtn = document.getElementById('close-service-plan');
-const contentDiv = document.getElementById('service-plan-content');
-
-btn.addEventListener('click', async () => {
-  // Fetch and render service plans
-  try {
-    const res = await fetch('service-plans.json');
-    const plans = await res.json();
-    contentDiv.innerHTML = plans.map(plan =>
-      `<details${plans.indexOf(plan) === 0 ? ' open' : ''}>
-        <summary>${plan.plan}</summary>
-        <div>${plan.definition.replace(/\n/g, "<br>")}</div>
-      </details>`
-    ).join('');
-  } catch (err) {
-    contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load service plans.</div>';
-  }
-  modal.style.display = 'block';
-});
-closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
-modal.addEventListener('click', (e) => {
-  if (e.target === modal) modal.style.display = 'none';
-});
-  
+   
   main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
 })();
 
