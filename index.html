@@ -482,21 +482,24 @@ function createServicePlanButton(){
       container.style.justifyContent = 'flex-end';
       container.style.marginTop = '8px';
 
-      // The button itself
-      const btn = document.createElement('button');
-      btn.id = 'service-plan-btn';
-      btn.textContent = 'Service Plan Def's';
-      btn.type = 'button';
-      btn.style.padding = '8px 14px';
-      btn.style.background = '#2563eb';
-      btn.style.color = '#fff';
-      btn.style.border = 'none';
-      btn.style.borderRadius = '8px';
-      btn.style.boxShadow = '0 1px 6px rgba(0,0,0,.12)';
-      btn.style.fontSize = '14px';
-      btn.style.cursor = 'pointer';
+    // The button itself
+    const btn = document.createElement('button');
+    btn.id = 'service-plan-btn';
+    btn.textContent = 'Service Plan Definitions';   // or 'Service Plan Info'
+    btn.type = 'button';
 
-      container.appendChild(btn);
+    // style
+    btn.style.padding = '8px 14px';
+    btn.style.background = '#2563eb';
+    btn.style.color = '#fff';
+    btn.style.border = 'none';
+    btn.style.borderRadius = '8px';
+    btn.style.boxShadow = '0 1px 6px rgba(0,0,0,.12)';
+    btn.style.fontSize = '14px';
+    btn.style.cursor = 'pointer';
+
+    container.appendChild(btn);
+
 
       // Modal logic remains the same
       btn.addEventListener('click', async () => {
