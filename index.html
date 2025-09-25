@@ -529,12 +529,26 @@ function createServicePlanButton(){
           const res = await fetch('service-plans.json');
           const plans = await res.json();
           const contentDiv = document.getElementById('service-plan-content');
-          contentDiv.innerHTML = plans.map(plan =>
-            `<details${plans.indexOf(plan) === 0 ? ' open' : ''}>
-              <summary>${plan.plan}</summary>
-              <div>${plan.definition.replace(/\n/g, "<br>")}</div>
-            </details>`
-          ).join('');
+        contentDiv.innerHTML = plans.map(plan =>
+          `<details>
+             <summary>${plan.plan}</summary>
+             <div>${plan.definition.replace(/\n/g, "<br>")}</div>
+           </details>`
+        ).join('');
+
+        // Ensure all start collapsed
+        const detailsEls = contentDiv.querySelectorAll('details');
+        detailsEls.forEach(d => { d.open = false; });
+
+        // Accordion behavior: when one opens, close the others
+        detailsEls.forEach(d => {
+          d.addEventListener('toggle', () => {
+            if (d.open) {
+              detailsEls.forEach(o => { if (o !== d) o.open = false; });
+            }
+          });
+        });
+
         } catch (err) {
           contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load service plans.</div>';
         }
