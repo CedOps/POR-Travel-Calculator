@@ -116,12 +116,21 @@
 
     /* Modal styles */
   #service-plan-btn {
-    position:fixed;top:16px;right:16px;z-index:1100;
-    padding:8px 14px;background:#2563eb;color:#fff;
-    border:none;border-radius:8px;
-    box-shadow:0 1px 6px rgba(0,0,0,.12);
-    font-size:14px;cursor:pointer;
+    min-width: 160px;
+    padding: 8px 14px;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 1px 6px rgba(0,0,0,.12);
+    font-size: 14px;
+    cursor: pointer;
   }
+
+  .mapboxgl-ctrl.service-plan-ctrl {
+    margin-top: 8px; /* gives spacing below the Rate dropdown */
+  }
+
   #service-plan-modal {
     display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
     background:rgba(16,23,38,0.32);z-index:1200;
