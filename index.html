@@ -125,7 +125,18 @@
     box-shadow: 0 1px 6px rgba(0,0,0,.12);
     font-size: 14px;
     cursor: pointer;
+    transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
   }
+
+  #service-plan-btn:hover {
+    background: #1e4ed8; /* slightly darker blue */
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transform: translateY(-1px); /* subtle lift effect */
+  }
+  #service-plan-btn:active {
+    transform: translateY(1px) scale(0.98);
+  }
+
 
   .mapboxgl-ctrl.service-plan-ctrl {
     margin-top: 8px; /* gives spacing below the Rate dropdown */
