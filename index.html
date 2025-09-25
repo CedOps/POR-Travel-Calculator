@@ -159,7 +159,52 @@
     color: #333;
     line-height: 1.5;
   }
-
+  
+/* Modal styles */
+#service-plan-modal {
+  display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
+  background:rgba(16,23,38,0.32);z-index:1200;
+}
+#service-plan-modal .modal-content {
+  background:#fff;border-radius:12px;max-width:900px;
+  margin:60px auto;padding:16px 20px;box-shadow:0 4px 24px rgba(0,0,0,.20);
+  position:relative;
+}
+#close-service-plan {
+  position:absolute;top:16px;right:16px;
+  background:none;border:none;font-size:20px;
+  cursor:pointer;color:#374151;
+}
+#service-plan-content details {
+  background: #f7f7f7;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  padding: 0;
+}
+#service-plan-content summary {
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px;
+}
+#service-plan-content details[open] summary {
+  border-bottom: 1px solid #e5e7eb;
+  background: #fcfcfc;
+}
+#service-plan-content details div {
+  padding: 12px 12px 10px 12px;
+  font-size: 15px;
+  color: #333;
+  line-height: 1.5;
+}
+.mapboxgl-ctrl.service-plan-ctrl {
+  margin-top: 8px;
+}
+#service-plan-btn {
+  min-width: 160px;
+}
+  
 </style>
 </head>
 <body>
@@ -167,8 +212,6 @@
 <div id="status">Starting…</div>
 <div id="toast">C.C.</div>
 
-<!-- Service Plan Popup Button -->
-<button id="service-plan-btn">Service Plan Info</button>
 
 <!-- Modal Popup -->
 <div id="service-plan-modal">
@@ -453,6 +496,57 @@
     setTimeout(()=> pulse.classList.remove('show'), 1200);
   }
 
+function createServicePlanButton(){
+  class ServicePlanControl {
+    onAdd(map){
+      // Container for button
+      const container = document.createElement('div');
+      container.className = 'mapboxgl-ctrl service-plan-ctrl';
+      container.style.display = 'flex';
+      container.style.justifyContent = 'flex-end';
+      container.style.marginTop = '8px';
+
+      // The button itself
+      const btn = document.createElement('button');
+      btn.id = 'service-plan-btn';
+      btn.textContent = 'Service Plan Info';
+      btn.type = 'button';
+      btn.style.padding = '8px 14px';
+      btn.style.background = '#2563eb';
+      btn.style.color = '#fff';
+      btn.style.border = 'none';
+      btn.style.borderRadius = '8px';
+      btn.style.boxShadow = '0 1px 6px rgba(0,0,0,.12)';
+      btn.style.fontSize = '14px';
+      btn.style.cursor = 'pointer';
+
+      container.appendChild(btn);
+
+      // Modal logic remains the same
+      btn.addEventListener('click', async () => {
+        try {
+          const res = await fetch('service-plans.json');
+          const plans = await res.json();
+          const contentDiv = document.getElementById('service-plan-content');
+          contentDiv.innerHTML = plans.map(plan =>
+            `<details${plans.indexOf(plan) === 0 ? ' open' : ''}>
+              <summary>${plan.plan}</summary>
+              <div>${plan.definition.replace(/\n/g, "<br>")}</div>
+            </details>`
+          ).join('');
+        } catch (err) {
+          contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load service plans.</div>';
+        }
+        document.getElementById('service-plan-modal').style.display = 'block';
+      });
+
+      return container;
+    }
+    onRemove(){ this._container?.remove(); }
+  }
+  return new ServicePlanControl();
+}
+  
   async function main(){
     await loadConfig();
     setStatus('Initialising map…');
@@ -463,7 +557,8 @@
     const geocoder=new MapboxGeocoder({accessToken:MAPBOX_TOKEN,mapboxgl,marker:false,placeholder:'Search address or postcode…',countries:COUNTRIES});
     map.addControl(geocoder,'top-right');
     map.addControl(createRateControl(),'top-right');
-
+    map.addControl(createServicePlanButton(),'top-right');
+    
     const rows=await loadCSV(CSV_URL);
     const feats=rows.map((r,i)=>rowToFeature(r,i)).filter(Boolean);
 
@@ -905,6 +1000,13 @@ modal.addEventListener('click', (e) => {
   
   main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
 })();
+
+const modal = document.getElementById('service-plan-modal');
+const closeBtn = document.getElementById('close-service-plan');
+closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+modal.addEventListener('click', (e) => {
+  if (e.target === modal) modal.style.display = 'none';
+});
 </script>
 </body>
 </html>
