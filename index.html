@@ -218,15 +218,31 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
-  // Modal close wiring (safe: only binds if elements exist)
+  // Modal close handlers (× button, overlay click, ESC key)
   const modalEl = document.getElementById('service-plan-modal');
   const closePlanBtn = document.getElementById('close-service-plan');
+
   if (modalEl && closePlanBtn) {
-    closePlanBtn.addEventListener('click', () => { modalEl.style.display = 'none'; });
+    // × button
+    closePlanBtn.addEventListener('click', () => {
+      modalEl.style.display = 'none';
+    });
+
+    // click overlay
     modalEl.addEventListener('click', (e) => {
-      if (e.target === modalEl) modalEl.style.display = 'none';
+      if (e.target === modalEl) {
+      modalEl.style.display = 'none';
+      }
+    });
+
+    // ESC key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modalEl.style.display === 'block') {
+        modalEl.style.display = 'none';
+      }
     });
   }
+
   
   // Toast helper: default 2s (CC), copy actions call with 4s
   function showToast(msg='C.C.', duration=2000){
