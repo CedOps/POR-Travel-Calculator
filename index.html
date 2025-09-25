@@ -113,31 +113,6 @@
   /* Context-aware pulse colors */
   .copy-pulse.pulse-amber { color:#b45309; } /* amber-700 */
   .copy-pulse.pulse-gray  { color:#374151; } /* gray-700 */
-
-  /* Modal styles */
-  #service-plan-btn {
-    position:fixed;top:16px;right:16px;z-index:1100;
-    padding:8px 14px;background:#2563eb;color:#fff;
-    border:none;border-radius:8px;
-    box-shadow:0 1px 6px rgba(0,0,0,.12);
-    font-size:14px;cursor:pointer;
-  }
-  #service-plan-modal {
-    display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;
-    background:rgba(16,23,38,0.32);z-index:1200;
-  }
-  #service-plan-modal .modal-content {
-    background:#fff;border-radius:12px;max-width:600px;
-    margin:60px auto;padding:24px 30px;box-shadow:0 4px 24px rgba(0,0,0,.20);
-    position:relative;
-  }
-  #close-service-plan {
-    position:absolute;top:16px;right:16px;
-    background:none;border:none;font-size:20px;
-    cursor:pointer;color:#374151;
-  }
-  #service-plan-modal details { margin-bottom:12px;}
-  #service-plan-modal summary {font-size:16px;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -145,47 +120,704 @@
 <div id="status">Starting…</div>
 <div id="toast">C.C.</div>
 
-<!-- Service Plan Popup Button -->
-<button id="service-plan-btn">Service Plan Info</button>
-
-<!-- Modal Popup -->
-<div id="service-plan-modal">
-  <div class="modal-content">
-    <button id="close-service-plan">×</button>
-    <h2 style="margin-top:0;margin-bottom:12px;color:#2563eb;">Service Plan Definitions</h2>
-    <details open>
-      <summary><b>Express Warranty</b></summary>
-      <div style="padding:8px 0 0 0;color:#333;font-size:15px;">
-        Express Warranty is only applicable for 12 months after installation. The warranty applies to parts and workmanship but only applies if the customer is not at fault. If the customer is at fault or an external factor has caused the fault (for example, bugs/webs, lightning strikes, water damage, etc) full charges apply (call out, labour and parts).<br><br>
-        Customers should still be quoted both ways as it will be up to the technician on site to determine if the fault is warranty related.<br><br>
-        <b>Note:</b> If the issue occurs within three months of the installation the job needs to be raised as an Installation Recall. To do this raise a normal service job and change the Job Request to INRE - this job should be left in the open status.
-      </div>
-    </details>
-    <details>
-      <summary><b>QSP (Extended Warranty)</b></summary>
-      <div style="padding:8px 0 0 0;color:#333;font-size:15px;">
-        Extended warranty coverage. Please refer to your contract for exact terms.
-      </div>
-    </details>
-    <details>
-      <summary><b>Peace of Mind (POM)</b></summary>
-      <div style="padding:8px 0 0 0;color:#333;font-size:15px;">
-        Peace of Mind plans include additional servicing and support.
-      </div>
-    </details>
-    <details>
-      <summary><b>Comprehensive Extended Warranty</b></summary>
-      <div style="padding:8px 0 0 0;color:#333;font-size:15px;">
-        Comprehensive extended warranty for selected equipment.
-      </div>
-    </details>
-    <details>
-      <summary><b>Equipment Hire/Lease</b></summary>
-      <div style="padding:8px 0 0 0;color:#333;font-size:15px;">
-        Equipment is supplied as a hire or lease arrangement. Charges may apply for damage or loss.
-      </div>
-    </details>
-  </div>
-</div>
-
 <script>
+(() => {
+  // ===== CONFIG =====
+  let RATES = { "Default": 2.08 };
+  let RATE_PER_KM = 2.08;  // ex GST
+  let GST_PERCENT = 0.10;
+  let FREE_KM     = 50;
+  let SL_TRIGGER_KM = 35;  // skip Directions for very short SL distances
+  let GRACE_KM    = 15;    // grace only applies when SL is inside FREE_KM
+
+  const ACCOM_KM  = 250;
+  const ACCOM_MIN = 150;
+
+  const MAPBOX_TOKEN = "pk.eyJ1IjoibWVpc3RlcmciLCJhIjoiY21mbWZ3MWljMDFmZzJsb2UyNzlvanhwdiJ9.ABrCTCsLUIcU0R7bXv_GbA";
+  const CSV_URL      = "data.csv";
+  const COUNTRIES    = "AU";
+  const CURRENCY     = "AUD";
+
+  const AVG_SPEED_KPH = 80;
+  const ALT_COUNT     = 3;
+  const NEAREST_COLOR = '#2563eb';
+  const ALT_COLORS    = ['#f59e0b','#ef4444','#10b981'];
+
+  const statusEl = document.getElementById('status');
+  const toastEl  = document.getElementById('toast');
+  const setStatus = html => statusEl && (statusEl.innerHTML = html);
+  const gstFactor = () => 1 + GST_PERCENT;
+
+  // Toast helper: default 2s (CC), copy actions call with 4s
+  function showToast(msg='C.C.', duration=2000){
+    toastEl.textContent=msg;
+    toastEl.classList.add('show');
+    setTimeout(()=>toastEl.classList.remove('show'),duration);
+  }
+  window.addEventListener('keydown', e => { if((e.key||'').toLowerCase()==='t') showToast(); });
+
+  async function loadConfig(){
+    try{
+      const res=await fetch('./config.json',{cache:'no-store'});
+      if(!res.ok) return;
+      const cfg=await res.json();
+      if(cfg.rates){ RATES=cfg.rates; RATE_PER_KM = Number(Object.values(RATES)[0])||RATE_PER_KM; }
+      if(typeof cfg.gst==='number') GST_PERCENT=cfg.gst;
+      if(typeof cfg.freeKm==='number') FREE_KM=cfg.freeKm;
+      if(typeof cfg.slTriggerKm==='number') SL_TRIGGER_KM=cfg.slTriggerKm;
+      if(typeof cfg.graceKm==='number') GRACE_KM=cfg.graceKm;
+    }catch(e){ console.warn('Config missing; using defaults.'); }
+  }
+
+  function createRateControl(){
+    class RateControl {
+      onAdd(map){
+        const container=document.createElement('div'); container.className='mapboxgl-ctrl rate-ctrl';
+        const label=document.createElement('label'); label.textContent='Rate:';
+        const sel=document.createElement('select');
+        Object.entries(RATES).forEach(([name,val])=>{
+          const v=Number(val); const opt=document.createElement('option');
+          opt.value=String(v); opt.textContent=`${name} ($${v.toFixed(2)}/km ex GST)`;
+          if(Math.abs(v-RATE_PER_KM)<1e-9) opt.selected=true;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener('change', ()=>{
+          RATE_PER_KM=parseFloat(sel.value);
+          refreshCostsFromStored();
+          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
+        });
+        container.appendChild(label); container.appendChild(sel);
+
+        setTimeout(()=>{
+          const corner=document.querySelector('.mapboxgl-ctrl-top-right');
+          const geocoder=document.querySelector('.mapboxgl-ctrl-geocoder');
+          if(corner && geocoder){
+            if(geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
+            else corner.appendChild(container);
+          }
+        },0);
+        return container;
+      }
+      onRemove(){ this._container?.remove(); }
+    }
+    return new RateControl();
+  }
+
+  // Helpers
+  const yn  = v => String(v||'').trim().toLowerCase()==='yes' || String(v||'').trim().toLowerCase()==='true';
+  const num = v => { if(v==null) return NaN; const s=String(v).trim().replace(/[^\d.\-+eE]/g,''); return parseFloat(s); };
+  const money = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY,minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
+  const str = v => (v==null ? '' : String(v));
+
+  function rowToFeature(row,id){
+    const lat=num(row.Lat), lng=num(row.Lng);
+    if (isNaN(lat) || isNaN(lng)) return null;
+    row['Access Control']   = row['Access Control'] ?? row['AccessControl'] ?? '';
+    row['Single Tech only'] = row['Single Tech only'] ?? row['SingleTechOnly'] ?? '';
+    row.State = str(row.State).trim().toUpperCase();
+    return { type:'Feature', id, geometry:{type:'Point', coordinates:[lng,lat]}, properties:row };
+  }
+
+  function loadCSV(url){
+    return new Promise((resolve,reject)=>{
+      Papa.parse(url,{download:true,header:true,skipEmptyLines:true,
+        complete:res=>resolve(res.data), error:err=>reject(err)});
+    });
+  }
+
+  async function getDriving(from,to){
+    const url=`https://api.mapbox.com/directions/v5/mapbox/driving/${from[0]},${from[1]};${to[0]},${to[1]}?overview=full&geometries=geojson&steps=true&access_token=${MAPBOX_TOKEN}`;
+    const res=await fetch(url); const j=await res.json(); const r=j.routes?.[0];
+    if(!r) throw new Error('No route');
+    const hasFerry =
+      (Array.isArray(r.classes) && r.classes.includes('ferry')) ||
+      (Array.isArray(r.legs) && r.legs.some(l =>
+         Array.isArray(l.steps) && l.steps.some(s =>
+           (s.mode && String(s.mode).toLowerCase()==='ferry') ||
+           /ferry/i.test(s.name||'') ||
+           /ferry/i.test(s.maneuver?.instruction||'')
+         )));
+    return { km:r.distance/1000, minutes:r.duration/60, geometry:r.geometry, ferry: !!hasFerry };
+  }
+
+  function serviceChips(p){
+    const base=['CCTV','Alarm','Access Control','Install','Service'].map(k=>{
+      const val = yn(p[k]);
+      const color = val ? '#16a34a' : '#dc2626';
+      const bg    = val ? '#dcfce7' : '#fee2e2';
+      const border= val ? '#16a34a' : '#dc2626';
+      return `<span style="padding:2px 6px;border:1px solid ${border};border-radius:12px;margin:2px;font-size:12px;background:${bg};color:${color};">${k}</span>`;
+    }).join(' ');
+    const single = yn(p['Single Tech only'])
+      ? `<span style="padding:2px 8px;border:1px solid #dc2626;border-radius:12px;margin:2px;font-size:12px;background:#fee2e2;color:#dc2626;">Single Tech Only</span>`
+      : '';
+    return base + (single ? (' ' + single) : '');
+  }
+
+  function buildPopupHTML(p){
+    const chipsHTML = serviceChips(p);
+    const notes = (p.Notes && String(p.Notes).trim()) ? String(p.Notes).trim() : "";
+    return `<div>
+      <h3 style="margin:0 0 4px">${p.POR||''}, ${p.State||''}</h3>
+      <div style="font-size:12px;color:#555;margin:6px 0"><strong>Preferred Resource:</strong> ${p['Preferred Resource']||'—'}</div>
+      ${p.Phone?`<div>📞 ${p.Phone}</div>`:''}
+      ${p.Email?`<div>✉️ <a href="mailto:${p.Email}">${p.Email}</a></div>`:''}
+      <div style="margin-top:6px">${chipsHTML}</div>
+      ${notes ? `<div style="margin-top:6px"><strong>Notes:</strong> ${notes}</div>` : ``}
+    </div>`;
+  }
+
+  // Instruction builder
+  function buildInstructions({accom,ferry,outOfState,state}){
+    const parts=[];
+    if(accom) parts.push('Accommodation charges may apply');
+    if(ferry) parts.push('Ferry costs may apply');
+    if(outOfState) parts.push(`Resource may not be licensed in ${state}`);
+    if(!parts.length) return '';
+    return `Instructions: ${parts.join('; ')} — refer to Notes or Check w SDC.`;
+  }
+
+  function addOrUpdateLine(map, id, color, geometry){
+    if(!map.getSource(id)){
+      map.addSource(id,{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+      map.addLayer({id, type:'line', source:id, paint:{'line-color':color,'line-width':3,'line-opacity':0.9}});
+    }
+    map.getSource(id).setData({
+      type:'FeatureCollection',
+      features: geometry ? [{type:'Feature',geometry,properties:{}}] : []
+    });
+    map.setLayoutProperty(id, 'visibility', geometry ? 'visible' : 'none');
+  }
+  function removeAltRoutes(map){
+    ALT_COLORS.forEach((_,i)=>{
+      const id=`route-alt-${i}`;
+      if(map.getLayer(id)) map.removeLayer(id);
+      if(map.getSource(id)) map.removeSource(id);
+    });
+  }
+
+  function getAUStateAbbrevFromGeocoder(result){
+    const parts = (result && result.context) || [];
+    const region = parts.find(p => (p.id||'').startsWith('region.'));
+    const sc = region && region.short_code;
+    if(sc && sc.toUpperCase().startsWith('AU-')) return sc.slice(3).toUpperCase();
+    return null;
+  }
+
+  function nearestInStateOrFallback(coord, feats, stateAbbrev){
+    const from = turf.point(coord);
+    const byDist = (a,b)=>a.km-b.km;
+
+    const inState = feats
+      .filter(f => String(f.properties.State).toUpperCase() === (stateAbbrev||'').toUpperCase())
+      .map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})}))
+      .sort(byDist);
+
+    if (inState.length) return {feature: inState[0].feature, km: inState[0].km, usedFallback:false};
+
+    const all = feats.map(f => ({feature:f, km: turf.distance(from,f,{units:'kilometers'})})).sort(byDist);
+    return {feature: all[0].feature, km: all[0].km, usedFallback:true};
+  }
+
+  function alternatesSorted(coord, feats, excludeId){
+    const from = turf.point(coord);
+    return feats
+      .filter(f=>f.id!==excludeId)
+      .map(f=>({ feature:f, slKm: turf.distance(from,f,{units:'kilometers'}) }))
+      .sort((a,b)=>a.slKm-b.slKm)
+      .slice(0, ALT_COUNT);
+  }
+
+  const altPopups = {};
+  let nearestPopup = null;
+  let queryCoordGlobal = null;
+  let nearestCoordGlobal = null;
+  const activeAltCoords = new Map();
+  let initialBounds = null; // for clearing back to full-map
+
+  // Asymmetric padding so content isn't hidden under the left panel
+  function panelPadding(){
+    const w = (statusEl && statusEl.offsetWidth) ? statusEl.offsetWidth : 360;
+    const left = Math.min(Math.max(w + 20, 220), 520);
+    return { top: 80, right: 80, bottom: 80, left };
+  }
+
+  function refreshCostsFromStored(){
+    const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
+    if(!isNaN(km)){
+      const chargeable = Math.max(0, km - FREE_KM);
+      const ex  = chargeable * 2 * RATE_PER_KM;
+      const inc = ex * gstFactor();
+      const incEl=document.getElementById('nearest-cost-main');
+      const subEl=document.getElementById('nearest-cost-sub');
+      if(incEl) incEl.textContent = money(inc);
+      if(subEl) subEl.textContent = `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+      // also update pulse color to reflect payable vs zero
+      const pill = document.getElementById('nearest-cost-pill');
+      const pulse = document.getElementById('pulse-nearest');
+      if (pill && pulse) {
+        const payable = pill.classList.contains('cost-pay');
+        pulse.classList.toggle('pulse-amber', payable);
+        pulse.classList.toggle('pulse-gray',  !payable);
+      }
+    }
+    document.querySelectorAll('.alt-cost-main').forEach(span=>{
+      const akm=Number(span.dataset.km); if(isNaN(akm)) return; // rounded
+      const chargeable=Math.max(0, akm-FREE_KM);
+      const exAlt=chargeable*2*RATE_PER_KM;
+      const incAlt=exAlt*gstFactor();
+      span.textContent = money(incAlt);
+    });
+    document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
+      const akm=Number(sub.dataset.km); if(isNaN(akm)) return; // rounded
+      const chargeable=Math.max(0, akm-FREE_KM);
+      const exAlt=chargeable*2*RATE_PER_KM;
+      sub.textContent = `(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+    });
+  }
+
+  // Used to label the searched location in copy text
+  let lastSearchLabel = '';
+
+  // Mini pulse next to copy icon
+  function flashPulse(btn, text='Copied'){
+    let pulse = btn.nextElementSibling;
+    if(!pulse || !pulse.classList.contains('copy-pulse')){
+      pulse = document.createElement('span');
+      pulse.className = 'copy-pulse';
+      btn.insertAdjacentElement('afterend', pulse);
+    }
+    pulse.textContent = text;
+    pulse.classList.add('show');
+    setTimeout(()=> pulse.classList.remove('show'), 1200);
+  }
+
+  async function main(){
+    await loadConfig();
+    setStatus('Initialising map…');
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+    const map = new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/streets-v12',center:[144.96,-37.81],zoom:6});
+    map.addControl(new mapboxgl.NavigationControl(),'bottom-right');
+
+    const geocoder=new MapboxGeocoder({accessToken:MAPBOX_TOKEN,mapboxgl,marker:false,placeholder:'Search address or postcode…',countries:COUNTRIES});
+    map.addControl(geocoder,'top-right');
+    map.addControl(createRateControl(),'top-right');
+
+    const rows=await loadCSV(CSV_URL);
+    const feats=rows.map((r,i)=>rowToFeature(r,i)).filter(Boolean);
+
+    showToast('C.C.');
+
+    function ensurePointLayer(){
+      if(!map.getSource('query-point')){
+        map.addSource('query-point',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+        map.addLayer({id:'query-point',type:'circle',source:'query-point',paint:{'circle-radius':5,'circle-color':'#111827','circle-stroke-color':'#fff','circle-stroke-width':1}});
+      }
+    }
+
+    async function showNearestFrom(coord, stateAbbrev){
+      try{
+        ensurePointLayer();
+
+        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
+        Object.values(altPopups).forEach(p => p.remove());
+        for (const k in altPopups) delete altPopups[k];
+        if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
+        removeAltRoutes(map);
+        activeAltCoords.clear();
+
+        map.getSource('query-point').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Point',coordinates:coord},properties:{}}]});
+        queryCoordGlobal = coord;
+
+        const pick = nearestInStateOrFallback(coord, feats, stateAbbrev);
+        const nearest = pick.feature;
+        const slKm = pick.km;
+
+        let within=false, km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, ferry=false;
+
+        // --- Correct grace logic ---
+        // 1) Very short SL: within, no directions call
+        if (slKm <= SL_TRIGGER_KM) {
+          within = true;
+          // km remains slKm
+        }
+        // 2) SL within free circle: check road with grace allowance
+        else if (slKm <= FREE_KM) {
+          try{
+            const r = await getDriving(coord, nearest.geometry.coordinates);
+            const roadKm=r.km, roadMin=r.minutes; ferry=!!r.ferry;
+            if (roadKm <= FREE_KM + GRACE_KM) {
+              within=true; km=slKm; mins=(slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
+            } else {
+              within=false; km=roadKm; mins=roadMin; routeGeom=r.geometry; modeLabel='road';
+            }
+          }catch(e){
+            console.warn('Nearest Directions failed (inside circle); falling back to SL as within', e);
+            within = true; // inside circle → treat within if directions fail
+            km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
+          }
+        }
+        // 3) SL already outside free circle: NO GRACE, use road distance and charge
+        else {
+          try{
+            const r = await getDriving(coord, nearest.geometry.coordinates);
+            within=false; km=r.km; mins=r.minutes; routeGeom=r.geometry; modeLabel='road'; ferry=!!r.ferry;
+          }catch(e){
+            console.warn('Nearest Directions failed (outside circle); using SL but treating as outside', e);
+            within=false; km=slKm; mins=(slKm/AVG_SPEED_KPH)*60; routeGeom={type:'LineString',coordinates:[coord, nearest.geometry.coordinates]}; modeLabel='straight-line';
+          }
+        }
+
+        // ROUND distance up (drives both display and cost)
+        const kmRounded = Math.ceil(km);
+
+        // DRAW: road if outside and we have geometry; otherwise draw straight line
+        if (!within && routeGeom) {
+          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
+        } else {
+          const straightGeom = { type:'LineString', coordinates:[coord, nearest.geometry.coordinates] };
+          addOrUpdateLine(map,'route-nearest',NEAREST_COLOR, straightGeom);
+        }
+        nearestCoordGlobal = nearest.geometry.coordinates;
+
+        nearestPopup = new mapboxgl.Popup({offset:12, closeOnClick:false})
+          .setLngLat(nearest.geometry.coordinates)
+          .setHTML(buildPopupHTML(nearest.properties))
+          .addTo(map);
+
+        const badgeClass = within ? 'ok' : 'warn';
+        const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
+        const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+
+        // COSTS (use rounded km)
+        let ex=0, inc=0;
+        if(!within){
+          const chargeable=Math.max(0, kmRounded - FREE_KM);
+          ex  = chargeable * 2 * RATE_PER_KM;
+          inc = ex * gstFactor();
+        }
+        const costClassNearest = inc > 0.0001 ? 'cost-pay' : 'cost-zero';
+
+        const needsAccom = (!within) && (km > ACCOM_KM || mins > ACCOM_MIN);
+        const p=nearest.properties;
+        const chipsHTML = serviceChips(p);
+
+        const instrNearest = buildInstructions({
+          accom: needsAccom,
+          ferry: ferry,
+          outOfState: outOfStateNearest,
+          state: stateAbbrev || ''
+        });
+
+        const alts = alternatesSorted(coord, feats, nearest.id);
+        const altCache = {};
+        await Promise.all(alts.map(async (a,i)=>{
+          if (a.slKm > SL_TRIGGER_KM && a.slKm <= FREE_KM) {
+            try{
+              const r = await getDriving(coord, a.feature.geometry.coordinates);
+              const roadKm=r.km, roadMin=r.minutes;
+              const outside = roadKm > (FREE_KM + GRACE_KM);
+              altCache[i] = {
+                prechecked:true, outside, km:roadKm, mins:roadMin, geom:r.geometry,
+                needsAccom: outside && (roadKm > ACCOM_KM || roadMin > ACCOM_MIN),
+                ferry: !!r.ferry
+              };
+            }catch(e){ altCache[i] = {prechecked:false}; }
+          } else { altCache[i] = {prechecked:false}; }
+        }));
+
+        const altHtml = alts.map((a, i) => {
+          const pf = a.feature.properties;
+          const cache = altCache[i] || {prechecked:false};
+          const withinAlt = cache.prechecked ? !cache.outside : (a.slKm <= FREE_KM);
+          const cls = withinAlt ? 'ok':'warn';
+          const txt = withinAlt ? 'Within 50 km' : 'Outside 50 km';
+          const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+          const accomNow = (!!cache.prechecked && !!cache.outside && !!cache.needsAccom);
+          const ferryNow  = (!!cache.prechecked && !!cache.ferry);
+
+          return `
+            <details class="alt" data-alt-index="${i}">
+              <summary>
+                <span><b>Alt POR:</b> ${pf.POR}, ${pf.State||''}</span>
+                <span class="pill ${cls}">${txt}</span>
+                ${isOutOfState ? `<span class="pill warn">Out of State</span>` : ``}
+                <span class="pill warn accom-pill" style="display:${accomNow ? 'inline-block' : 'none'}">Accommodation may be required – Check w SDC</span>
+                <span class="pill warn ferry-pill"  style="display:${ferryNow ? 'inline-block' : 'none'}">Ferry required – Check w SDC</span>
+              </summary>
+              <div class="alt-body" style="display:none"></div>
+            </details>
+          `;
+        }).join('');
+
+        setStatus(`
+          <div class="row">
+            <div><b>Nearest POR:</b> <span class="u">${p.POR}, ${p.State||''}</span></div>
+            <div class="pill ${badgeClass}">${badgeText}</div>
+            ${outOfStateNearest ? `<div class="pill warn">Out of State</div>` : ``}
+            ${needsAccom ? `<div class="pill warn">Accommodation may be required – Check w SDC</div>` : ``}
+            ${ferry ? `<div class="pill warn">Ferry required – Check w SDC</div>` : ``}
+          </div>
+          <div class="row">
+            <div class="pill"><b>Distance (One Way):</b> ${Math.ceil(km)} km <span class="muted">(${modeLabel})</span></div>
+            <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(mins)} min</div>
+          </div>
+          <div class="row">
+            <div id="nearest-cost-pill" class="pill cost-pill ${costClassNearest}">
+              <b>Travel Charge inc GST:</b>
+              <span id="nearest-cost-main" class="cost-main">${money(inc)}</span>
+              <span id="nearest-cost-sub" class="cost-sub">(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+              <button class="copy-btn" id="copy-nearest" title="Copy to clipboard" aria-label="Copy to clipboard">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+              <span class="copy-pulse" id="pulse-nearest" aria-hidden="true">Copied</span>
+            </div>
+          </div>
+          ${instrNearest ? `<div class="row instr"><div><b>Instructions:</b> ${instrNearest.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
+          <div class="row"><div><b>Preferred Resource:</b> ${p['Preferred Resource']||'—'}</div></div>
+          <div class="row">${chipsHTML}</div>
+          ${(p.Notes && String(p.Notes).trim())
+            ? `<div class="row"><div><b>Notes:</b> ${String(p.Notes).trim()}</div></div>`
+            : ``}
+          ${altHtml ? `<hr class="alts-sep"><div class="row" style="margin-top:0"><b>Alternate PORs:</b></div>${altHtml}` : ''}
+        `);
+
+        // store rounded km for later recalc on rate change
+        statusEl.dataset.nearestKm = String(Math.ceil(km));
+
+        // Set pulse color to match the nearest cost pill
+        const pulseNearest = document.getElementById('pulse-nearest');
+        if (pulseNearest) {
+          pulseNearest.classList.toggle('pulse-amber', costClassNearest === 'cost-pay');
+          pulseNearest.classList.toggle('pulse-gray',  costClassNearest !== 'cost-pay');
+        }
+
+        // Nearest COPY BUTTON (Copied toast = 4s)
+        const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
+        const searchLabel = lastSearchLabel || `Selected location`;
+        const copyLine = `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(inc)} inc GST (${money(ex)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+        const copyBtnNearest = document.getElementById('copy-nearest');
+        copyBtnNearest?.addEventListener('click', () => {
+          navigator.clipboard.writeText(copyLine)
+            .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
+            .catch(()=> showToast('Copy failed', 4000));
+        });
+
+        // Fit bounds with asymmetric padding so left panel doesn't cover lines
+        const b=new mapboxgl.LngLatBounds();
+        b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+        map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
+
+        // wire alternates
+        document.querySelectorAll('details.alt').forEach((el)=>{
+          const idx = Number(el.dataset.altIndex);
+          const alt  = alts[idx];
+          const pf   = alt.feature.properties;
+          const layerId = `route-alt-${idx}`;
+          const color   = ALT_COLORS[idx % ALT_COLORS.length];
+          const lngLat  = alt.feature.geometry.coordinates;
+          const cache   = altCache[idx] || {prechecked:false};
+
+          if(!map.getSource(layerId)){ addOrUpdateLine(map, layerId, color, null); }
+
+          el.addEventListener('toggle', async ()=>{
+            const body = el.querySelector('.alt-body');
+
+            if(el.open){
+              let akm, amins, amode='straight', ageom=null, outside=false, needsAccomAlt=false, ferryAlt=false;
+              const isOutOfState = String(pf.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
+
+              if (cache.prechecked) {
+                if (cache.outside) { akm=cache.km; amins=cache.mins; amode='driving'; ageom=cache.geom; outside=true; needsAccomAlt=cache.needsAccom; ferryAlt=!!cache.ferry; }
+                else { akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ferryAlt=false; }
+              } else if (alt.slKm > FREE_KM) {
+                try{
+                  const r = await getDriving(queryCoordGlobal, lngLat);
+                  akm=r.km; amins=r.minutes; amode='driving'; ageom=r.geometry; outside=true;
+                  needsAccomAlt = (akm > ACCOM_KM || amins > ACCOM_MIN);
+                  ferryAlt = !!r.ferry;
+                }catch(e){
+                  akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=true; ageom={type:'LineString',coordinates:[queryCoordGlobal, lngLat]}; ferryAlt=false; needsAccomAlt=false;
+                }
+              } else { akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ferryAlt=false; }
+
+              // ROUND alt distance up
+              const akmRounded = Math.ceil(akm);
+
+              // Costs (rounded distance)
+              const chargeable=Math.max(0, akmRounded-FREE_KM);
+              let exAlt=0, incAlt=0;
+              if(outside){ exAlt=chargeable*2*RATE_PER_KM; incAlt=exAlt*gstFactor(); }
+              const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
+
+              const accomPill = el.querySelector('.accom-pill');
+              if (accomPill) accomPill.style.display = (outside && (akm > ACCOM_KM || amins > ACCOM_MIN)) ? 'inline-block' : 'none';
+              const ferryPill = el.querySelector('.ferry-pill');
+              if (ferryPill) ferryPill.style.display = ferryAlt ? 'inline-block' : 'none';
+
+              const chips = serviceChips(pf);
+              const instrAlt = buildInstructions({
+                accom: (outside && (akm > ACCOM_KM || amins > ACCOM_MIN)),
+                ferry: ferryAlt,
+                outOfState: isOutOfState,
+                state: stateAbbrev || ''
+              });
+
+              body.style.display='block';
+              body.innerHTML = `
+                <div class="row">
+                  <div class="pill"><b>Distance (One Way):</b> ${akmRounded} km <span class="muted">(${amode==='driving'?'road':'straight-line'})</span></div>
+                  <div class="pill"><b>Est. Time (One Way):</b> ${Math.round(amins)} min</div>
+                </div>
+                <div class="row">
+                  <div class="pill cost-pill ${costClassAlt}">
+                    <b>Travel Charge inc GST:</b>
+                    <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
+                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+                    <button class="copy-btn" id="copy-alt-${idx}" title="Copy to clipboard" aria-label="Copy to clipboard">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                    <span class="copy-pulse ${costClassAlt==='cost-pay' ? 'pulse-amber' : 'pulse-gray'}" aria-hidden="true">Copied</span>
+                  </div>
+                </div>
+                ${instrAlt ? `<div class="row instr"><div><b>Instructions:</b> ${instrAlt.replace(/^Instructions:\s*/,'')}</div></div>` : ``}
+                <div class="row"><div><b>Preferred Resource:</b> ${pf['Preferred Resource']||'—'}</div></div>
+                <div class="row chips">${chips}</div>
+                ${(pf.Notes && String(pf.Notes).trim())
+                  ? `<div class="row"><div><b>Notes:</b> ${String(pf.Notes).trim()}</div></div>`
+                  : ``}
+              `;
+
+              // DRAW LINE for ALT: road if outside, else straight
+              const geomToDraw = (outside && ageom)
+                ? ageom
+                : { type:'LineString', coordinates:[queryCoordGlobal, lngLat] };
+              addOrUpdateLine(map, layerId, color, geomToDraw);
+
+              // ALT COPY BUTTON (Copied toast = 4s)
+              const porLabelAlt = `${pf.POR || ''}, ${pf.State || ''}`.replace(/\s+,/g, ',').trim();
+              const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
+              const lineContainer = copyBtnAlt?.parentElement;
+              const pulseSpan = lineContainer?.querySelector('.copy-pulse');
+              const copyLineAlt = `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+
+              copyBtnAlt?.addEventListener('click', () => {
+                navigator.clipboard.writeText(copyLineAlt)
+                  .then(()=> {
+                    showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
+                    if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
+                    else { flashPulse(copyBtnAlt, 'Copied'); }
+                  })
+                  .catch(()=> showToast('Copy failed', 4000));
+              });
+
+              const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
+                .setLngLat(lngLat).setHTML(buildPopupHTML(pf)).addTo(map);
+              altPopups[layerId] = popup;
+
+              activeAltCoords.set(layerId, lngLat);
+              const b=new mapboxgl.LngLatBounds();
+              b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+              [...activeAltCoords.values()].forEach(c=>b.extend(c));
+              map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
+
+            }else{
+              addOrUpdateLine(map, layerId, color, null);
+              if(altPopups[layerId]){ altPopups[layerId].remove(); delete altPopups[layerId]; }
+              activeAltCoords.delete(layerId);
+              const b=new mapboxgl.LngLatBounds();
+              b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+              [...activeAltCoords.values()].forEach(c=>b.extend(c));
+              map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
+            }
+          });
+        });
+
+      }catch(e){ console.error(e); setStatus(`❌ Nearest calc error: ${e.message}`); }
+    }
+
+    map.on('load', ()=>{
+      const fcPins={type:'FeatureCollection',features:feats};
+      map.addSource('pins',{type:'geojson',data:fcPins});
+      map.addLayer({
+        id: 'pins',
+        type: 'circle',
+        source: 'pins',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': [
+            'case',
+            ['==', ['get', 'Category'], 'ADT'], '#2563eb',          // blue for ADT
+            ['==', ['get', 'Category'], 'Subcontractor'], '#ef4444', // red for Subcontractor
+            '#2563eb' // default to blue
+          ],
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 1
+        }
+      });
+      map.on('mouseenter','pins',()=>map.getCanvas().style.cursor='pointer');
+      map.on('mouseleave','pins',()=>map.getCanvas().style.cursor='');
+      map.on('click','pins', e=>{
+        const p=e.features[0].properties;
+        new mapboxgl.Popup({offset:12}).setLngLat(e.features[0].geometry.coordinates).setHTML(buildPopupHTML(p)).addTo(map);
+      });
+
+      const rings = feats
+        .filter(f => (String(f.properties.Circle50||'').toLowerCase()==='true' || yn(f.properties.Circle50)))
+        .map(f => turf.circle(f.geometry.coordinates, FREE_KM, {steps:64, units:'kilometers'}));
+      map.addSource('rings',{type:'geojson',data:{type:'FeatureCollection',features:rings}});
+      map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
+      map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
+
+      // Initial fit to all pins (no special left padding)
+      const bAll=new mapboxgl.LngLatBounds(); feats.forEach(f=>bAll.extend(f.geometry.coordinates));
+      if(!bAll.isEmpty()) map.fitBounds(bAll,{padding:60});
+      initialBounds = bAll;
+
+      geocoder.on('result', e => {
+        const center=e?.result?.center;
+        const stateAbbrev=getAUStateAbbrevFromGeocoder(e?.result)||'';
+        // Build a concise label like "Suburb, STATE"
+        const suburb = (e?.result?.text || '').trim();
+        lastSearchLabel = suburb && stateAbbrev ? `${suburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
+        if(center) showNearestFrom(center, stateAbbrev);
+      });
+      geocoder.on('clear', () => {
+        addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,null);
+        Object.values(altPopups).forEach(p => p.remove());
+        for (const k in altPopups) delete altPopups[k];
+        removeAltRoutes(map);
+        if(nearestPopup){ nearestPopup.remove(); nearestPopup=null; }
+        activeAltCoords.clear();
+        if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
+        lastSearchLabel = '';
+        setStatus('Cleared.');
+        // Refit to initial full map (no left padding because panel isn't covering anything important)
+        if(initialBounds && !initialBounds.isEmpty()) map.fitBounds(initialBounds,{padding:60});
+      });
+
+      setStatus(`Ready. Loaded <b>${feats.length}</b> PORs from <code>${CSV_URL}</code>. Search anywhere in Australia to calculate nearest and alternates.`);
+    });
+
+    // Refit on window resize to respect current panel width
+    window.addEventListener('resize', () => {
+      if(!queryCoordGlobal || !nearestCoordGlobal) return;
+      const b = new mapboxgl.LngLatBounds();
+      b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
+      [...activeAltCoords.values()].forEach(c=>b.extend(c));
+      try{ map.fitBounds(b, { padding: panelPadding(), maxZoom: 10 }); }catch(_e){}
+    });
+  }
+
+  main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
+})();
+</script>
+</body>
+</html>
+
