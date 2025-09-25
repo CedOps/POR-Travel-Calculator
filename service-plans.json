@@ -5,18 +5,18 @@
   },
   {
     "plan": "QSP (Extended Warranty)",
-    "definition": "Extended warranty coverage. Please refer to your contract for exact terms."
+    "definition": "QSP <u>only</u> applies if the customer is not at fault. If the customer is at fault or an external factor has caused the fault (for example, bugs/webs, lightning strikes, water damage, etc) full charges apply (call out, labour and parts).\n\nIf QSP is to apply, then the charges will be <i>50% of standard call out and no additional labour charge for time on site</i>. All parts are free of charge except for consumables (e.g. batteries). If replacement batteries are required, full call out, labour and parts charges apply. Customers should still be quoted both ways as it will be up to the technician on site to determine if the fault is warranty related. Other services required by a customer, for example, change of codes, training, equipment relocation, new equipment or replacement of batteries and any other services other than a fault should <u>NOT</u> be covered under Extended Warranty."
   },
   {
     "plan": "Peace of Mind (POM)",
-    "definition": "Peace of Mind plans include additional servicing and support."
+    "definition": "Full charges will apply if consumables are required, including call-out and labour fees. POM only applies to faulty alarm components and <b>not</b> consumables. If parts are found to be faulty, they will be replaced at no charge.\n\nPOM will cover external causes of faults (e.g. bugs/webs causing fault, lightning strike, water damage) but not damage caused by the customer themselves.\n\nOther services required by a customer, for example, training, change of codes, relocation of a part, additional parts and any other services other than a fault should <u>NOT</u> be covered under the Peace of Mind plan (POM)."
   },
   {
     "plan": "Comprehensive Extended Warranty",
-    "definition": "Comprehensive extended warranty for selected equipment."
+    "definition": "Comprehensive Extended Warranty <u>only</u> applies if the customer is not at fault. If the customer is at fault or an external factor has caused the fault (for example, bugs/webs, lightning strikes, water damage, etc) full charges apply (call out, labour and parts).\n\nIf Comprehensive Extended Warranty is to apply, there will be <i>no charge for call out or labour</i>. All parts are free of charge except for consumables (e.g. batteries). If replacement batteries are required, full call out, labour and parts charges apply.\n\nCustomers should still be quoted both ways as it will be up to the technician on site to determine if the fault is warranty related.\n\nOther services required by a customer, for example, change of codes, training, equipment relocation, new equipment or replacement of batteries and any other services other than a fault should <u>NOT</u> be covered under Comprehensive Extended Warranty."
   },
   {
     "plan": "Equipment Hire/Lease",
-    "definition": "Equipment is supplied as a hire or lease arrangement. Charges may apply for damage or loss."
+    "definition": "Equipment Hire <u>only</u> applies if the customer is not at fault. If the customer is at fault or an external factor has caused the fault (for example, bugs/webs, lightning strikes, water damage, etc) full charges apply (call out, labour and parts).\n\nIf Equipment Hire is to apply, there will be <i>no charge for call out or labour</i>. All parts are free of charge except for consumables (e.g. batteries). If replacement batteries are required, full call out, labour and parts charges apply.\n\nCustomers should still be quoted both ways as it will be up to the technician on site to determine if the fault is covered under the lease.\n\nOther services required by a customer, for example, change of codes, training, equipment relocation, new equipment or replacement of batteries and any other services other than a fault should <u>NOT</u> be covered under Equipment Hire."
   }
 ]
