@@ -1,12 +1,22 @@
 {
   "rates": {
-    "Standard ADT": 2.08,
-    "Premium": 2.50,
-    "Rural": 3.10
+    "Standard ADT": { "type": "flat", "perKm": 2.08 },
+
+    "ANZ/Suncorp": {
+      "type": "tier",
+      "freeKm": 50,
+      "thresholdKm": 250,
+      "rateBelow": 1.20,
+      "rateAbove": 1.80,
+
+      "applyTravelTime": true,
+      "timeRatePerHour": 104,
+      "timeIncrementMin": 30
+    }
   },
+
   "gst": 0.10,
   "freeKm": 50,
   "slTriggerKm": 35,
   "graceKm": 15
 }
-
