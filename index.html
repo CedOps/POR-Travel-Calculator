@@ -289,17 +289,38 @@
         const container=document.createElement('div'); container.className='mapboxgl-ctrl rate-ctrl';
         const label=document.createElement('label'); label.textContent='Rate:';
         const sel=document.createElement('select');
-        Object.entries(RATES).forEach(([name,val])=>{
-          const v=Number(val); const opt=document.createElement('option');
-          opt.value=String(v); opt.textContent=`${name} ($${v.toFixed(2)}/km ex GST)`;
-          if(Math.abs(v-RATE_PER_KM)<1e-9) opt.selected=true;
-          sel.appendChild(opt);
-        });
-        sel.addEventListener('change', ()=>{
-          RATE_PER_KM=parseFloat(sel.value);
-          refreshCostsFromStored();
-          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
-        });
+ 
+  // Build dropdown: works for flat (number) or tier (object) rates
+  Object.entries(RATES).forEach(([name, val]) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+  
+    if (typeof val === 'number') {
+      // flat rate
+      opt.textContent = `${name} ($${Number(val).toFixed(2)}/km ex GST)`;
+    } else {
+      // tiered rate
+      const below = Number(val.rateBelow ?? 0).toFixed(2);
+      const above = Number(val.rateAbove ?? 0).toFixed(2);
+      opt.textContent = `${name} (tiered ${below}/${above})`;
+    }
+    sel.appendChild(opt);
+  });
+  
+  // initial selection
+  CURRENT_RATE_NAME = Object.keys(RATES)[0];
+  sel.value = CURRENT_RATE_NAME;
+  
+  sel.addEventListener('change', () => {
+    CURRENT_RATE_NAME = sel.value;
+    refreshCostsFromStored();
+    const cfg = getActiveRateConfig();
+    const label = cfg.type === 'flat'
+      ? `$${Number(cfg.perKm ?? RATE_PER_KM).toFixed(2)}/km ex GST`
+      : 'Tiered';
+    showToast(`Rate → ${cfg.name} (${label})`);
+  });
+
         container.appendChild(label); container.appendChild(sel);
 
         setTimeout(()=>{
@@ -323,6 +344,64 @@
   const money = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY,minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
   const str = v => (v==null ? '' : String(v));
 
+  // --- Rate helpers -----------------------------------------------------------
+  let CURRENT_RATE_NAME = null; // we'll set this when we build the rate dropdown
+  
+  function getActiveRateConfig() {
+    // RATES may contain numbers (legacy "flat") or objects (new)
+    const firstName = CURRENT_RATE_NAME || Object.keys(RATES)[0];
+    const raw = RATES[firstName];
+    if (typeof raw === 'number') {
+      return { name:firstName, type:'flat', perKm: Number(raw), freeKm: FREE_KM, applyTravelTime:false };
+    }
+    return { name:firstName, type:'tier', freeKm: FREE_KM, applyTravelTime:false, ...raw };
+  }
+  
+  /**
+   * Compute EX-GST charges for distance + (optional) travel-time.
+   * @param {number} kmRounded - one-way rounded distance we already show
+   * @param {number} minsOneWay - one-way minutes
+   * @param {boolean} within - whether this job is within free circle logic
+   * @returns { exTotal, exDistance, exTime, label }
+   */
+  function computeChargesEx(kmRounded, minsOneWay, within) {
+    const cfg = getActiveRateConfig();
+    const freeKm = Number(cfg.freeKm ?? FREE_KM);
+    const chargeable = Math.max(0, kmRounded - freeKm);         // one-way
+    const chargeableRT = chargeable * 2;                        // round-trip
+    let exDistance = 0;
+    let exTime = 0;
+  
+    if (!within && chargeableRT > 0) {
+      if (cfg.type === 'flat') {
+        exDistance = chargeableRT * Number(cfg.perKm ?? RATE_PER_KM);
+      } else if (cfg.type === 'tier') {
+        const rate = kmRounded >= Number(cfg.thresholdKm ?? 250)
+          ? Number(cfg.rateAbove ?? 1.8)
+          : Number(cfg.rateBelow ?? 1.2);
+        exDistance = chargeableRT * rate;
+  
+        if (cfg.applyTravelTime) {
+          const inc = Number(cfg.timeIncrementMin ?? 30);
+          const perHour = Number(cfg.timeRatePerHour ?? 104);
+          const minutesRT = Math.ceil((minsOneWay * 2) / inc) * inc;
+          const hours = minutesRT / 60;
+          exTime = hours * perHour;
+        }
+      }
+    }
+  
+    return {
+      exDistance,
+      exTime,
+      exTotal: exDistance + exTime,
+      label: cfg.type === 'flat'
+        ? `$${Number(cfg.perKm ?? RATE_PER_KM).toFixed(2)}/km ex GST`
+        : `Tiered: 0–50km free, ≤249km @ $${(cfg.rateBelow??1.2).toFixed(2)}/km, ≥250km @ $${(cfg.rateAbove??1.8).toFixed(2)}/km${cfg.applyTravelTime?`, + time @ $${(cfg.timeRatePerHour??104).toFixed(0)}/h (${cfg.timeIncrementMin??30}m blocks)`:''}`
+    };
+  }
+
+  
   function rowToFeature(row,id){
     const lat=num(row.Lat), lng=num(row.Lng);
     if (isNaN(lat) || isNaN(lng)) return null;
@@ -672,13 +751,10 @@ function createServicePlanButton(){
         const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
         const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
-        // COSTS (use rounded km)
-        let ex=0, inc=0;
-        if(!within){
-          const chargeable=Math.max(0, kmRounded - FREE_KM);
-          ex  = chargeable * 2 * RATE_PER_KM;
-          inc = ex * gstFactor();
-        }
+        // COSTS (use rounded km) – supports flat or tier + optional time
+        const {exTotal, exDistance, exTime, label} = computeChargesEx(kmRounded, mins, within);
+        let ex = exTotal;
+        let inc = ex * gstFactor();
         const costClassNearest = inc > 0.0001 ? 'cost-pay' : 'cost-zero';
 
         const needsAccom = (!within) && (km > ACCOM_KM || mins > ACCOM_MIN);
@@ -749,7 +825,9 @@ function createServicePlanButton(){
             <div id="nearest-cost-pill" class="pill cost-pill ${costClassNearest}">
               <b>Travel Charge inc GST:</b>
               <span id="nearest-cost-main" class="cost-main">${money(inc)}</span>
-              <span id="nearest-cost-sub" class="cost-sub">(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+              <span id="nearest-cost-sub" class="cost-sub">
+                (${money(ex)} ex GST • ${activeRateLabel})
+              </span>
               <button class="copy-btn" id="copy-nearest" title="Copy to clipboard" aria-label="Copy to clipboard">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -830,10 +908,15 @@ function createServicePlanButton(){
               // ROUND alt distance up
               const akmRounded = Math.ceil(akm);
 
-              // Costs (rounded distance)
-              const chargeable=Math.max(0, akmRounded-FREE_KM);
-              let exAlt=0, incAlt=0;
-              if(outside){ exAlt=chargeable*2*RATE_PER_KM; incAlt=exAlt*gstFactor(); }
+              // Costs (rounded distance) – supports flat or tier + optional time
+              let exAlt=0, incAlt=0, exAltDist=0, exAltTime=0;
+              if (outside) {
+                const r = computeChargesEx(akmRounded, amins, /*within*/ false);
+                exAlt = r.exTotal;
+                exAltDist = r.exDistance;
+                exAltTime = r.exTime;
+                incAlt = exAlt * gstFactor();
+              }
               const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
 
               const accomPill = el.querySelector('.accom-pill');
@@ -859,7 +942,7 @@ function createServicePlanButton(){
                   <div class="pill cost-pill ${costClassAlt}">
                     <b>Travel Charge inc GST:</b>
                     <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
-                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">(${money(exAlt)} ex GST • ${activeRateLabel})</span>
                     <button class="copy-btn" id="copy-alt-${idx}" title="Copy to clipboard" aria-label="Copy to clipboard">
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
