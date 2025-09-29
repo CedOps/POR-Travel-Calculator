@@ -536,29 +536,35 @@
 
   function refreshCostsFromStored(){
     const km = Number(statusEl?.dataset?.nearestKm || NaN);
+    const mins = Number(statusEl?.dataset?.nearestMins || 0);
+    const within = statusEl?.dataset?.nearestWithin === '1';
+    
     if (!isNaN(km)) {
-      const pricing = computeChargesEx({ kmRounded: km, mins: null }, window.ACTIVE_RATE_META);
-      const ex = pricing.totalEx;
-      const inc = ex * gstFactor();
-
+      let ex = 0, inc = 0, subtitle = '';
+      
+      if (!within) {
+        const pricing = computeChargesEx({ kmRounded: km, mins: mins, FREE_KM }, window.ACTIVE_RATE_META);
+        ex = pricing.totalEx;
+        inc = ex * gstFactor();
+        
+        if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
+          subtitle = `(${money(pricing.distanceEx)} ex GST + ${money(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
+        } else {
+          subtitle = `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        }
+      } else {
+        inc = 0;
+        subtitle = `(${money(0)} ex GST • within 50 km)`;
+      }
+  
       // Update the main figures
       const incEl = document.getElementById('nearest-cost-main');
       const subEl = document.getElementById('nearest-cost-sub');
       if (incEl) incEl.textContent = money(inc);
-
-      // Subtitle (distance only OR distance + time if tiered_time)
-      if (subEl) {
-        if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
-          subEl.textContent =
-            `(${money(pricing.distanceEx)} ex GST + ${money(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
-        } else {
-          subEl.textContent =
-            `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
-        }
-      }
-
+      if (subEl) subEl.textContent = subtitle;
+  
       // also update pulse color to reflect payable vs zero
-      const pill  = document.getElementById('nearest-cost-pill');
+      const pill = document.getElementById('nearest-cost-pill');
       const pulse = document.getElementById('pulse-nearest');
       if (pill && pulse) {
         const payable = inc > 0.0001;
@@ -568,33 +574,47 @@
         pulse.classList.toggle('pulse-gray', !payable);
       }
     }
-
+  
     // Recompute ALTs (main amount)
     document.querySelectorAll('.alt-cost-main').forEach(span=>{
       const akm = Number(span.dataset.km);
-      if (isNaN(akm)) return; // rounded
-
-      const pricingAlt = computeChargesEx({ kmRounded: akm, mins: null }, window.ACTIVE_RATE_META);
-      const incAlt = pricingAlt.totalEx * gstFactor();
+      const amins = Number(span.dataset.mins || 0);
+      if (isNaN(akm)) return;
+  
+      let incAlt = 0;
+      const altWithin = akm <= FREE_KM;
+      
+      if (!altWithin) {
+        const pricingAlt = computeChargesEx({ kmRounded: akm, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
+        incAlt = pricingAlt.totalEx * gstFactor();
+      }
+  
       span.textContent = money(incAlt);
     });
-
+  
     // Recompute ALTs (subtitle)
     document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
       const akm = Number(sub.dataset.km);
-      if (isNaN(akm)) return; // rounded
-
-      const pricingAlt = computeChargesEx({ kmRounded: akm, mins: null }, window.ACTIVE_RATE_META);
-      if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
-        sub.textContent =
-          `(${money(pricingAlt.distanceEx)} ex GST + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
+      const amins = Number(sub.dataset.mins || 0);
+      if (isNaN(akm)) return;
+  
+      const altWithin = akm <= FREE_KM;
+      let subtitleAlt = '';
+      
+      if (!altWithin) {
+        const pricingAlt = computeChargesEx({ kmRounded: akm, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
+        if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
+          subtitleAlt = `(${money(pricingAlt.distanceEx)} ex GST + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
+        } else {
+          subtitleAlt = `(${money(pricingAlt.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        }
       } else {
-        sub.textContent =
-          `(${money(pricingAlt.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        subtitleAlt = `(${money(0)} ex GST • within 50 km)`;
       }
+      
+      sub.textContent = subtitleAlt;
     });
   }
-
   // Used to label the searched location in copy text
  let lastSearchLabel = '';
 
