@@ -540,8 +540,8 @@
   function refreshCostsFromStored(){
     const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
     if(!isNaN(km)){
-      const chargeable = Math.max(0, km - FREE_KM);
-      const ex  = chargeable * 2 * RATE_PER_KM;
+      const pricing = computeChargesEx({ kmRounded: km, mins: null }, window.ACTIVE_RATE_META);
+      const ex = pricing.totalEx;
       const inc = ex * gstFactor();
       const incEl=document.getElementById('nearest-cost-main');
       const subEl=document.getElementById('nearest-cost-sub');
@@ -966,11 +966,17 @@ function createServicePlanButton(){
               // ROUND alt distance up
               const akmRounded = Math.ceil(akm);
 
-              // Costs (rounded distance)
-              const chargeable=Math.max(0, akmRounded-FREE_KM);
-              let exAlt=0, incAlt=0;
-              if(outside){ exAlt=chargeable*2*RATE_PER_KM; incAlt=exAlt*gstFactor(); }
+              // Costs (rounded distance) — use computeChargesEx so tiered/time rates work
+              const pricingAlt = computeChargesEx({ kmRounded: akmRounded, mins: amins }, window.ACTIVE_RATE_META);
+              const exAlt = pricingAlt.totalEx;
+              const incAlt = exAlt * gstFactor();
               const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
+              
+              // Build subtitle string for pill
+              const subtitleAlt = (window.ACTIVE_RATE_META?.kind === 'tiered_time')
+                ? `(${money(pricingAlt.distanceEx)} + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
+                : `(${money(pricingAlt.distanceEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST)`;
+
 
               const accomPill = el.querySelector('.accom-pill');
               if (accomPill) accomPill.style.display = (outside && (akm > ACCOM_KM || amins > ACCOM_MIN)) ? 'inline-block' : 'none';
@@ -995,7 +1001,7 @@ function createServicePlanButton(){
                   <div class="pill cost-pill ${costClassAlt}">
                     <b>Travel Charge inc GST:</b>
                     <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
-                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">
+                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">${subtitleAlt}</span>
                       ${
                         (window.ACTIVE_RATE_META?.kind) === 'tiered_time'
                           ? `(${money(exAlt)} + ${money(pricing?.timeEx || 0)} ex GST • $${RATE_PER_KM.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
