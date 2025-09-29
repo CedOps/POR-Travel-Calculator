@@ -538,33 +538,66 @@
   }
 
     function refreshCostsFromStored(){
-      // Nearest (pill)
-      const km = Number(statusEl?.dataset?.nearestKm || NaN);
-      if (isNaN(km)) return;
-      const mins = Number(statusEl?.dataset?.nearestMins || 0);
+      const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
+      if (!isNaN(km)) {
+        // Use the same charge engine so tiered_time works
+        const pricing = computeChargesEx({ kmRounded: km, mins: null }, window.ACTIVE_RATE_META);
     
-      const meta = window.ACTIVE_RATE_META || { kind: 'flat', perKm: RATE_PER_KM };
+        const ex  = pricing.totalEx;
+        const inc = ex * gstFactor();
     
-      // Use the same engine everywhere so tiered/time rules are respected
-      const pricing = computeChargesEx({ kmRounded: km, mins }, meta);
+        // Update the main figures
+        const incEl = document.getElementById('nearest-cost-main');
+        const subEl = document.getElementById('nearest-cost-sub');
+        if (incEl) incEl.textContent = money(inc);
     
-      const incEl  = document.getElementById('nearest-cost-main');
-      const subEl  = document.getElementById('nearest-cost-sub');
-      const pillEl = document.getElementById('nearest-cost-pill');
-      const pulse  = document.getElementById('pulse-nearest');
+        // Subtitle (distance only OR distance + time if tiered_time)
+        if (subEl) {
+          if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
+            subEl.textContent =
+              `(${money(pricing.distanceEx)} ex GST + ${money(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
+          } else {
+            subEl.textContent =
+              `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+          }
+        }
     
-      if (incEl) incEl.textContent = money(pricing.totalInc);
-    
-      if (subEl){
-        if (meta.kind === 'tiered_time'){
-          subEl.textContent =
-            `(${money(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${meta.timePerHour}/h)`;
-        } else {
-          // flat (legacy) behaviour
-          subEl.textContent =
-            `(${money(pricing.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        // also update pulse color to reflect payable vs zero
+        const pill  = document.getElementById('nearest-cost-pill');
+        const pulse = document.getElementById('pulse-nearest');
+        if (pill && pulse) {
+          const payable = pill.classList.contains('cost-pay');
+          pulse.classList.toggle('pulse-amber',  payable);
+          pulse.classList.toggle('pulse-gray',  !payable);
         }
       }
+    
+      // Recompute ALTs (main amount)
+      document.querySelectorAll('.alt-cost-main').forEach(span=>{
+        const akm = Number(span.dataset.km);
+        if (isNaN(akm)) return; // rounded
+    
+        const pricingAlt = computeChargesEx({ kmRounded: akm, mins: null }, window.ACTIVE_RATE_META);
+        const incAlt = pricingAlt.totalEx * gstFactor();
+        span.textContent = money(incAlt);
+      });
+    
+      // Recompute ALTs (subtitle)
+      document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
+        const akm = Number(sub.dataset.km);
+        if (isNaN(akm)) return; // rounded
+    
+        const pricingAlt = computeChargesEx({ kmRounded: akm, mins: null }, window.ACTIVE_RATE_META);
+        if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
+          sub.textContent =
+            `(${money(pricingAlt.distanceEx)} ex GST + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
+        } else {
+          sub.textContent =
+            `(${money(pricingAlt.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        }
+      });
+    }
+
     
       if (pillEl && pulse){
         const payable = pricing.totalInc > 0.0001;
