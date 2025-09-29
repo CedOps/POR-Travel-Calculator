@@ -768,7 +768,10 @@ function createServicePlanButton(){
             const ar = window.ACTIVE_RATE_META;
             subtitle = `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${ar.timePerHour}/h)`;
           } else {
-            subtitle = `(${currency(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST)`;
+            subtitle = (window.ACTIVE_RATE_META?.kind === 'tiered_time')
+              ? `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
+              : `(${currency(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST)`;
+
           }
           inc = ex * gstFactor();
         } else {
@@ -898,10 +901,19 @@ function createServicePlanButton(){
               `distance ${currency(pricing.distanceEx)} ex, time ${currency(pricing.timeEx)} ex) round trip. ` +
               `Excludes additional charges (accommodation, ferry etc).`;
           } else {
-            copyLine =
-              `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
-              `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip. ` +
-              `Excludes additional charges (accommodation, ferry etc).`;
+              if ((window.ACTIVE_RATE_META?.kind) === 'tiered_time') {
+                copyLine =
+                  `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way), ${Math.round(mins)} min est (one way). ` +
+                  `Total = ${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST: ` +
+                  `distance ${currency(pricing.distanceEx)} ex, time ${currency(pricing.timeEx)} ex) round trip. ` +
+                  `Excludes additional charges (accommodation, ferry etc).`;
+              } else {
+                copyLine =
+                  `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
+                  `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip. ` +
+                  `Excludes additional charges (accommodation, ferry etc).`;
+  }
+}
           }
         } else {
           copyLine =
@@ -983,7 +995,14 @@ function createServicePlanButton(){
                   <div class="pill cost-pill ${costClassAlt}">
                     <b>Travel Charge inc GST:</b>
                     <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
-                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">
+                      ${
+                        (window.ACTIVE_RATE_META?.kind) === 'tiered_time'
+                          ? `(${money(exAlt)} + ${money(pricing?.timeEx || 0)} ex GST • $${RATE_PER_KM.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
+                          : `(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`
+                      }
+                    </span>
+
                     <button class="copy-btn" id="copy-alt-${idx}" title="Copy to clipboard" aria-label="Copy to clipboard">
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -1012,7 +1031,16 @@ function createServicePlanButton(){
               const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
-              const copyLineAlt = `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+              let copyLineAlt;
+              if ((window.ACTIVE_RATE_META?.kind) === 'tiered_time') {
+                copyLineAlt =
+                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way), ${Math.round(amins)} min est (one way). ` +
+                  `Total = ${money(incAlt)} inc GST (${money(exAlt)} ex GST: distance ${money(exAlt)} ex, time ${money((window.ACTIVE_RATE_META.timePerHour || 0))} ex) round trip. ` +
+                  `Excludes additional charges (accommodation, ferry etc).`;
+              } else {
+                copyLineAlt =
+                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+              }
 
               copyBtnAlt?.addEventListener('click', () => {
                 navigator.clipboard.writeText(copyLineAlt)
