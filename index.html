@@ -704,6 +704,14 @@ function createServicePlanButton(){
     }
 
     async function showNearestFrom(coord, stateAbbrev){
+      // FIX: Ensure ACTIVE_RATE_META is always defined before use
+      if (!window.ACTIVE_RATE_META) {
+        window.ACTIVE_RATE_META = normalizeRate(RATES[Object.keys(RATES)[0]]);
+        if (window.ACTIVE_RATE_META.kind === 'flat') {
+          RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
+        }
+      }
+
       try{
         ensurePointLayer();
 
@@ -782,15 +790,14 @@ function createServicePlanButton(){
         if(!within){
           const pricing = computeChargesEx(
             { kmRounded: Math.ceil(km), mins: mins, FREE_KM },
-            (window.ACTIVE_RATE_META || { kind:'flat', perKm: RATE_PER_KM })
+            window.ACTIVE_RATE_META // Now guaranteed to be defined
           );
           ex  = pricing.totalEx;
           kmRateApplied = pricing.kmRateApplied;
         
           const currency = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY}).format(v);
-          if ((window.ACTIVE_RATE_META?.kind) === 'tiered_time') {
-            const ar = window.ACTIVE_RATE_META;
-            subtitle = `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${ar.timePerHour}/h)`;
+          if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
+            subtitle = `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
           } else {
             subtitle = `(${currency(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST)`;
           }
@@ -912,9 +919,9 @@ function createServicePlanButton(){
         
         let copyLine = '';
         if (!within) {
-          const pricing = computeChargesEx({ kmRounded: Math.ceil(km), mins });
+          const pricing = computeChargesEx({ kmRounded: Math.ceil(km), mins }, window.ACTIVE_RATE_META);
         
-          const ar = window.ACTIVE_RATE_META || { kind: 'flat', perKm: RATE_PER_KM };
+          const ar = window.ACTIVE_RATE_META;
           if (ar.kind === 'tiered_time') {
             copyLine =
               `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way), ${Math.round(mins)} min est (one way). ` +
@@ -987,7 +994,7 @@ function createServicePlanButton(){
               const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
               
               // Build subtitle string for pill
-              const subtitleAlt = (window.ACTIVE_RATE_META?.kind === 'tiered_time')
+              const subtitleAlt = (window.ACTIVE_RATE_META.kind === 'tiered_time')
                 ? `(${money(pricingAlt.distanceEx)} + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
                 : `(${money(pricingAlt.distanceEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST)`;
 
@@ -1044,7 +1051,7 @@ function createServicePlanButton(){
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
               let copyLineAlt;
-              if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
+              if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
                 copyLineAlt =
                   `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way), ${Math.round(amins)} min est (one way). ` +
                   `Total = ${money(incAlt)} inc GST (${money(exAlt)} ex GST: distance ${money(pricingAlt.distanceEx)} ex, time ${money(pricingAlt.timeEx)} ex) round trip. ` +
