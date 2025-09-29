@@ -537,25 +537,66 @@
     return { top: 80, right: 80, bottom: 80, left };
   }
 
-  function refreshCostsFromStored(){
-    const km = Number(statusEl?.dataset?.nearestKm || NaN); // already rounded
-    if(!isNaN(km)){
-      const pricing = computeChargesEx({ kmRounded: km, mins: null }, window.ACTIVE_RATE_META);
-      const ex = pricing.totalEx;
-      const inc = ex * gstFactor();
-      const incEl=document.getElementById('nearest-cost-main');
-      const subEl=document.getElementById('nearest-cost-sub');
-      if(incEl) incEl.textContent = money(inc);
-      if(subEl) subEl.textContent = `(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
-      // also update pulse color to reflect payable vs zero
-      const pill = document.getElementById('nearest-cost-pill');
-      const pulse = document.getElementById('pulse-nearest');
-      if (pill && pulse) {
-        const payable = pill.classList.contains('cost-pay');
+    function refreshCostsFromStored(){
+      // Nearest (pill)
+      const km = Number(statusEl?.dataset?.nearestKm || NaN);
+      if (isNaN(km)) return;
+      const mins = Number(statusEl?.dataset?.nearestMins || 0);
+    
+      const meta = window.ACTIVE_RATE_META || { kind: 'flat', perKm: RATE_PER_KM };
+    
+      // Use the same engine everywhere so tiered/time rules are respected
+      const pricing = computeChargesEx({ kmRounded: km, mins }, meta);
+    
+      const incEl  = document.getElementById('nearest-cost-main');
+      const subEl  = document.getElementById('nearest-cost-sub');
+      const pillEl = document.getElementById('nearest-cost-pill');
+      const pulse  = document.getElementById('pulse-nearest');
+    
+      if (incEl) incEl.textContent = money(pricing.totalInc);
+    
+      if (subEl){
+        if (meta.kind === 'tiered_time'){
+          subEl.textContent =
+            `(${money(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${meta.timePerHour}/h)`;
+        } else {
+          // flat (legacy) behaviour
+          subEl.textContent =
+            `(${money(pricing.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+        }
+      }
+    
+      if (pillEl && pulse){
+        const payable = pricing.totalInc > 0.0001;
+        pillEl.classList.toggle('cost-pay',  payable);
+        pillEl.classList.toggle('cost-zero', !payable);
         pulse.classList.toggle('pulse-amber', payable);
         pulse.classList.toggle('pulse-gray',  !payable);
       }
+    
+      // Alternates – recompute each from its saved km/mins
+      document.querySelectorAll('.alt-cost-main').forEach(main => {
+        const kmAlt   = Number(main.dataset.km);
+        const minsAlt = Number(main.dataset.mins || 0);
+        if (isNaN(kmAlt)) return;
+    
+        const p = computeChargesEx({ kmRounded: kmAlt, mins: minsAlt }, meta);
+        main.textContent = money(p.totalInc);
+    
+        // match the subtitle format to the active rate type
+        const sub = document.querySelector(`.alt-cost-sub[data-idx="${main.dataset.idx}"]`);
+        if (sub){
+          if (meta.kind === 'tiered_time'){
+            sub.textContent =
+              `(${money(p.distanceEx)} ex GST • $${p.kmRateApplied.toFixed(2)}/km ex GST, $${meta.timePerHour}/h)`;
+          } else {
+            sub.textContent =
+              `(${money(p.totalEx)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
+          }
+        }
+      });
     }
+
     document.querySelectorAll('.alt-cost-main').forEach(span=>{
       const akm=Number(span.dataset.km); if(isNaN(akm)) return; // rounded
       const chargeable=Math.max(0, akm-FREE_KM);
@@ -999,8 +1040,8 @@ function createServicePlanButton(){
                 <div class="row">
                   <div class="pill cost-pill ${costClassAlt}">
                     <b>Travel Charge inc GST:</b>
-                    <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}">${money(incAlt)}</span>
-                    <span class="alt-cost-sub cost-sub" data-idx="${idx}" data-km="${akmRounded}">${subtitleAlt}</span>
+                      <span class="alt-cost-main cost-main" data-idx="${idx}" data-km="${akmRounded}" data-mins="${Math.round(amins)}">${money(incAlt)}</span>
+                      <span class="alt-cost-sub cost-sub"  data-idx="${idx}" data-km="${akmRounded}" data-mins="${Math.round(amins)}">(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
                       ${
                         (window.ACTIVE_RATE_META?.kind) === 'tiered_time'
                           ? `(${money(exAlt)} + ${money(pricing?.timeEx || 0)} ex GST • $${RATE_PER_KM.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
