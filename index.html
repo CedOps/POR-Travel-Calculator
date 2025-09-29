@@ -629,20 +629,6 @@
         }
       });
     }
-
-    document.querySelectorAll('.alt-cost-main').forEach(span=>{
-      const akm=Number(span.dataset.km); if(isNaN(akm)) return; // rounded
-      const chargeable=Math.max(0, akm-FREE_KM);
-      const exAlt=chargeable*2*RATE_PER_KM;
-      const incAlt=exAlt*gstFactor();
-      span.textContent = money(incAlt);
-    });
-    document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
-      const akm=Number(sub.dataset.km); if(isNaN(akm)) return; // rounded
-      const chargeable=Math.max(0, akm-FREE_KM);
-      const exAlt=chargeable*2*RATE_PER_KM;
-      sub.textContent = `(${money(exAlt)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)`;
-    });
   }
 
   // Used to label the searched location in copy text
