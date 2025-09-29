@@ -236,6 +236,61 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
+  // --- Rate helpers -----------------------------------------------------------
+  function isFlatRate(meta){ return meta && (meta.type === 'flat' || typeof meta === 'number'); }
+  function flatPerKm(meta){ return typeof meta === 'number' ? meta : Number(meta.perKm || 0); }
+  function isTieredTime(meta){ return meta && meta.type === 'tiered_time'; }
+  
+  function rateLabel(name, meta){
+    if (isFlatRate(meta)) return `${name} ($${flatPerKm(meta).toFixed(2)}/km ex GST)`;
+    if (isTieredTime(meta)) {
+      const k1 = meta.km?.tier1?.rate ?? 0, k2 = meta.km?.tier2?.rate ?? 0;
+      const hr = meta.time?.ratePerHour ?? 0;
+      return `${name} (tiered $${k1.toFixed(2)}/$${k2.toFixed(2)} + $${hr}/h)`;
+    }
+    return name;
+  }
+  
+  function normalizeRate(meta){
+    if (isFlatRate(meta)) {
+      return { kind: 'flat', perKm: flatPerKm(meta) };
+    }
+    if (isTieredTime(meta)) {
+      return {
+        kind: 'tiered_time',
+        baseFreeKm: Number(meta.km?.baseFreeKm ?? 50),
+        tier1Rate: Number(meta.km?.tier1?.rate ?? 0),
+        tier2Cut: Number(meta.km?.tier1?.upto ?? 250),
+        tier2Rate: Number(meta.km?.tier2?.rate ?? 0),
+        timePerHour: Number(meta.time?.ratePerHour ?? 0),
+        timeIncMin: Number(meta.time?.incrementMinutes ?? 30)
+      };
+    }
+    return { kind: 'flat', perKm: flatPerKm(2.08) };
+  }
+  
+  // Compute distance/time ex-GST based on active rate and distances
+  function computeChargesEx({ kmRounded, mins, FREE_KM }, activeRate){
+    const chargeableKm = Math.max(0, kmRounded - FREE_KM);
+    let distanceEx = 0, timeEx = 0, kmRateApplied = 0;
+  
+    if (activeRate.kind === 'flat') {
+      kmRateApplied = activeRate.perKm;
+      distanceEx = chargeableKm * 2 * activeRate.perKm; // round trip
+    } else if (activeRate.kind === 'tiered_time') {
+      const kmRate = (kmRounded > activeRate.tier2Cut) ? activeRate.tier2Rate : activeRate.tier1Rate;
+      kmRateApplied = kmRate;
+      distanceEx = chargeableKm * 2 * kmRate; // round trip distance
+  
+      const inc = Math.max(1, activeRate.timeIncMin);
+      const roundedOneWayMin = Math.ceil(mins / inc) * inc;
+      const roundedRoundTripHours = (roundedOneWayMin * 2) / 60;
+      timeEx = roundedRoundTripHours * activeRate.timePerHour;
+    }
+    return { distanceEx, timeEx, totalEx: distanceEx + timeEx, kmRateApplied };
+  }
+
+
   // Modal close handlers (× button, overlay click, ESC key)
   const modalEl = document.getElementById('service-plan-modal');
   const closePlanBtn = document.getElementById('close-service-plan');
@@ -284,39 +339,65 @@
   }
 
   function createRateControl(){
-    class RateControl {
-      onAdd(map){
-        const container=document.createElement('div'); container.className='mapboxgl-ctrl rate-ctrl';
-        const label=document.createElement('label'); label.textContent='Rate:';
-        const sel=document.createElement('select');
-        Object.entries(RATES).forEach(([name,val])=>{
-          const v=Number(val); const opt=document.createElement('option');
-          opt.value=String(v); opt.textContent=`${name} ($${v.toFixed(2)}/km ex GST)`;
-          if(Math.abs(v-RATE_PER_KM)<1e-9) opt.selected=true;
-          sel.appendChild(opt);
-        });
-        sel.addEventListener('change', ()=>{
-          RATE_PER_KM=parseFloat(sel.value);
-          refreshCostsFromStored();
-          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
-        });
-        container.appendChild(label); container.appendChild(sel);
+  class RateControl {
+    onAdd(map){
+      const container = document.createElement('div');
+      container.className = 'mapboxgl-ctrl rate-ctrl';
 
-        setTimeout(()=>{
-          const corner=document.querySelector('.mapboxgl-ctrl-top-right');
-          const geocoder=document.querySelector('.mapboxgl-ctrl-geocoder');
-          if(corner && geocoder){
-            if(geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
-            else corner.appendChild(container);
-          }
-        },0);
-        return container;
+      const label = document.createElement('label');
+      label.textContent = 'Rate:';
+
+      const sel = document.createElement('select');
+
+      Object.entries(RATES).forEach(([name, meta])=>{
+        const opt = document.createElement('option');
+        opt.value = name; // store the name
+        opt.textContent = rateLabel(name, meta);
+        sel.appendChild(opt);
+      });
+
+      // default to first entry
+      sel.value = Object.keys(RATES)[0];
+      window.ACTIVE_RATE_NAME = sel.value;
+      window.ACTIVE_RATE_META = normalizeRate(RATES[sel.value]);
+      if (window.ACTIVE_RATE_META.kind === 'flat') {
+        RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
       }
-      onRemove(){ this._container?.remove(); }
-    }
-    return new RateControl();
-  }
 
+      sel.addEventListener('change', ()=>{
+        window.ACTIVE_RATE_NAME = sel.value;
+        window.ACTIVE_RATE_META = normalizeRate(RATES[sel.value]);
+
+        if (window.ACTIVE_RATE_META.kind === 'flat') {
+          RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
+          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
+        } else {
+          const ar = window.ACTIVE_RATE_META;
+          showToast(`Rate → tiered $${ar.tier1Rate.toFixed(2)}/$${ar.tier2Rate.toFixed(2)} + $${ar.timePerHour}/h`);
+        }
+        refreshCostsFromStored();
+      });
+
+      container.appendChild(label);
+      container.appendChild(sel);
+
+      setTimeout(()=>{
+        const corner = document.querySelector('.mapboxgl-ctrl-top-right');
+        const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
+        if (corner && geocoder) {
+          if (geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
+          else corner.appendChild(container);
+        }
+      },0);
+
+      return container;
+    }
+    onRemove(){ this._container?.remove(); }
+  }
+  return new RateControl();
+}
+
+  
   // Helpers
   const yn  = v => String(v||'').trim().toLowerCase()==='yes' || String(v||'').trim().toLowerCase()==='true';
   const num = v => { if(v==null) return NaN; const s=String(v).trim().replace(/[^\d.\-+eE]/g,''); return parseFloat(s); };
@@ -673,13 +754,35 @@ function createServicePlanButton(){
         const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
         // COSTS (use rounded km)
-        let ex=0, inc=0;
+        let ex=0, inc=0, subtitle='', kmRateApplied = RATE_PER_KM;
         if(!within){
-          const chargeable=Math.max(0, kmRounded - FREE_KM);
-          ex  = chargeable * 2 * RATE_PER_KM;
+          const pricing = computeChargesEx(
+            { kmRounded: Math.ceil(km), mins: mins, FREE_KM },
+            (window.ACTIVE_RATE_META || { kind:'flat', perKm: RATE_PER_KM })
+          );
+          ex  = pricing.totalEx;
+          kmRateApplied = pricing.kmRateApplied;
+        
+          const currency = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY}).format(v);
+          if ((window.ACTIVE_RATE_META?.kind) === 'tiered_time') {
+            const ar = window.ACTIVE_RATE_META;
+            subtitle = `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${ar.timePerHour}/h)`;
+          } else {
+            subtitle = `(${currency(pricing.distanceEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST)`;
+          }
           inc = ex * gstFactor();
+        } else {
+          const currency = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY}).format(v);
+          ex = 0; inc = 0;
+          subtitle = `(${currency(0)} ex GST • within 50 km)`;
         }
         const costClassNearest = inc > 0.0001 ? 'cost-pay' : 'cost-zero';
+        
+        // store for refresh
+        statusEl.dataset.nearestKm = String(Math.ceil(km));
+        statusEl.dataset.nearestMins = String(Math.round(mins));
+        statusEl.dataset.nearestWithin = within ? '1' : '0';
+
 
         const needsAccom = (!within) && (km > ACCOM_KM || mins > ACCOM_MIN);
         const p=nearest.properties;
@@ -749,7 +852,7 @@ function createServicePlanButton(){
             <div id="nearest-cost-pill" class="pill cost-pill ${costClassNearest}">
               <b>Travel Charge inc GST:</b>
               <span id="nearest-cost-main" class="cost-main">${money(inc)}</span>
-              <span id="nearest-cost-sub" class="cost-sub">(${money(ex)} ex GST • $${RATE_PER_KM.toFixed(2)}/km ex GST)</span>
+              <span id="nearest-cost-sub" class="cost-sub">${subtitle}</span>
               <button class="copy-btn" id="copy-nearest" title="Copy to clipboard" aria-label="Copy to clipboard">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -781,8 +884,29 @@ function createServicePlanButton(){
         // Nearest COPY BUTTON (Copied toast = 4s)
         const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
         const searchLabel = lastSearchLabel || `Selected location`;
-        const copyLine = `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(inc)} inc GST (${money(ex)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
-        const copyBtnNearest = document.getElementById('copy-nearest');
+        const currency = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: CURRENCY }).format(v);
+        
+        let copyLine = '';
+        if (!within) {
+          const pricing = computeChargesEx({ kmRounded: Math.ceil(km), mins });
+        
+          const ar = window.ACTIVE_RATE_META || { kind: 'flat', perKm: RATE_PER_KM };
+          if (ar.kind === 'tiered_time') {
+            copyLine =
+              `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way), ${Math.round(mins)} min est (one way). ` +
+              `Total = ${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST: ` +
+              `distance ${currency(pricing.distanceEx)} ex, time ${currency(pricing.timeEx)} ex) round trip. ` +
+              `Excludes additional charges (accommodation, ferry etc).`;
+          } else {
+            copyLine =
+              `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
+              `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip. ` +
+              `Excludes additional charges (accommodation, ferry etc).`;
+          }
+        } else {
+          copyLine =
+            `Travel charges to ${searchLabel} from ${porLabel} – within 50 km (no distance/time charge).`;
+        }
         copyBtnNearest?.addEventListener('click', () => {
           navigator.clipboard.writeText(copyLine)
             .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
