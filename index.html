@@ -944,34 +944,46 @@ function createServicePlanButton(){
         const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
         const searchLabel = lastSearchLabel || `Selected location`;
         const currency = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: CURRENCY }).format(v);
-        
-        let copyLine = '';
-        if (!within) {
-          // Use the same calculation that worked for the display
-          const pricing = computeChargesEx(
-            { kmRounded: Math.ceil(km), mins: mins, FREE_KM },
-            window.ACTIVE_RATE_META
-          );
-          
-          if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
-            copyLine =
-              `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way), ${Math.round(mins)} min est (one way). ` +
-              `Total = ${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST: ` +
-              `distance ${currency(pricing.distanceEx)} ex, time ${currency(pricing.timeEx)} ex) round trip. ` +
-              `Excludes additional charges (accommodation, ferry etc).`;
-          } else {
-            copyLine =
-              `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
-              `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip. ` +
-              `Excludes additional charges (accommodation, ferry etc).`;
-          }
-        } else {
-          copyLine =
-            `Travel charges to ${searchLabel} from ${porLabel} – within 50 km (no distance/time charge).`;
-        }
 
         const copyBtnNearest = document.getElementById('copy-nearest');
         copyBtnNearest?.addEventListener('click', () => {
+          // Recalculate with current rate every time copy is clicked
+          const currentKm = Math.ceil(km);
+          const currentMins = Math.round(mins);
+          
+          let copyLine = '';
+          const exclusionText = (needsAccom || ferry) ? 
+            `\nExcludes additional charges (${needsAccom ? 'accommodation' : ''}${needsAccom && ferry ? ', ' : ''}${ferry ? 'ferry' : ''} etc).` : '';
+          
+          if (!within) {
+            const pricing = computeChargesEx(
+              { kmRounded: currentKm, mins: currentMins, FREE_KM },
+              window.ACTIVE_RATE_META
+            );
+            
+            if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
+              // ANZ/Suncorp format
+              const distanceCharge = pricing.distanceEx * gstFactor();
+              const timeCharge = pricing.timeEx * gstFactor();
+              const totalCharge = pricing.totalEx * gstFactor();
+              
+              copyLine =
+                `${window.ACTIVE_RATE_NAME} Travel charges to ${searchLabel} from ${porLabel} (return) – ${currentKm} km (each way) @ $${pricing.kmRateApplied.toFixed(2)}/km ex GST = ${currency(distanceCharge)} + ${currentMins} mins @ $${window.ACTIVE_RATE_META.timePerHour}/hr = ${currency(timeCharge)}.\n` +
+                `Total Travel Charge: ${currency(totalCharge)}.` +
+                `${exclusionText}`;
+            } else {
+              // Default flat rate format
+              copyLine =
+                `${window.ACTIVE_RATE_NAME} Travel charges to ${searchLabel} from ${porLabel} – ${currentKm} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
+                `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip.` +
+                `${exclusionText}`;
+            }
+          } else {
+            copyLine =
+              `${window.ACTIVE_RATE_NAME} Travel charges to ${searchLabel} from ${porLabel} – within 50 km (no distance/time charge).` +
+              `${exclusionText}`;
+          }
+
           navigator.clipboard.writeText(copyLine)
             .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
             .catch(()=> showToast('Copy failed', 4000));
@@ -1082,23 +1094,35 @@ function createServicePlanButton(){
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
 
-              // Recalculate for copy to ensure we have fresh data
-              const pricingAltCopy = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
-              const exAltCopy = pricingAltCopy.totalEx;
-              const incAltCopy = exAltCopy * gstFactor();
-
-              let copyLineAlt;
-              if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
-                copyLineAlt =
-                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way), ${Math.round(amins)} min est (one way). ` +
-                  `Total = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST: distance ${money(pricingAltCopy.distanceEx)} ex, time ${money(pricingAltCopy.timeEx)} ex) round trip. ` +
-                  `Excludes additional charges (accommodation, ferry etc).`;
-              } else {
-                copyLineAlt =
-                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
-              }
-
               copyBtnAlt?.addEventListener('click', () => {
+                // Recalculate with current rate every time copy is clicked
+                const pricingAltCopy = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
+                const exAltCopy = pricingAltCopy.totalEx;
+                const incAltCopy = exAltCopy * gstFactor();
+
+                // Determine if alternates need accommodation/ferry exclusions
+                const needsAccomAlt = (outside && (akm > ACCOM_KM || amins > ACCOM_MIN));
+                const exclusionTextAlt = (needsAccomAlt || ferryAlt) ? 
+                  `\nExcludes additional charges (${needsAccomAlt ? 'accommodation' : ''}${needsAccomAlt && ferryAlt ? ', ' : ''}${ferryAlt ? 'ferry' : ''} etc).` : '';
+
+                let copyLineAlt;
+                if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
+                  // ANZ/Suncorp format for alternates
+                  const distanceChargeAlt = pricingAltCopy.distanceEx * gstFactor();
+                  const timeChargeAlt = pricingAltCopy.timeEx * gstFactor();
+                  const totalChargeAlt = pricingAltCopy.totalEx * gstFactor();
+                  
+                  copyLineAlt =
+                    `${window.ACTIVE_RATE_NAME} Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} (return) – ${akmRounded} km (each way) @ $${pricingAltCopy.kmRateApplied.toFixed(2)}/km ex GST = ${currency(distanceChargeAlt)} + ${Math.round(amins)} mins @ $${window.ACTIVE_RATE_META.timePerHour}/hr = ${currency(timeChargeAlt)}.\n` +
+                    `Total Travel Charge: ${currency(totalChargeAlt)}.` +
+                    `${exclusionTextAlt}`;
+                } else {
+                  // Default flat rate format for alternates
+                  copyLineAlt =
+                    `${window.ACTIVE_RATE_NAME} Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST) round trip.` +
+                    `${exclusionTextAlt}`;
+                }
+
                 navigator.clipboard.writeText(copyLineAlt)
                   .then(()=> {
                     showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
