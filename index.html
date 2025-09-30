@@ -22,7 +22,11 @@
     padding:10px 12px;font:13px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Arial;box-shadow:0 1px 6px rgba(0,0,0,.12);max-width:860px;
   }
   #status .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:4px 0}
-  #status .pill{border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px}
+  #status .pill{
+    border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px;
+    white-space:nowrap; /* Prevents text wrapping inside pills */
+    flex-shrink:0; /* Prevents pills from shrinking */
+  }
   #status .ok{color:#065f46;background:#d1fae5;border-color:#10b981}
   #status .warn{color:#7f1d1d;background:#fee2e2;border-color:#ef4444}
   #status .muted{color:#6b7280;font-size:12px}
@@ -34,6 +38,8 @@
     border-color:#60a5fa;background:#eff6ff;
     box-shadow: inset 0 0 0 1px rgba(96,165,250,.25);
     display:flex; align-items:center; gap:6px;
+    white-space:nowrap; /* Also prevent wrapping in cost pills */
+    flex-shrink:0;
   }
   .cost-main{font-weight:700}
   .cost-sub{color:#6b7280;font-size:12px;margin-left:6px}
@@ -46,6 +52,7 @@
     cursor:pointer; list-style:none; padding:4px 8px; border-radius:8px;
     border:1px solid #e5e7eb; display:flex; align-items:center; gap:8px;
     background:#f9fafb;
+    flex-wrap:wrap; /* Allow summary to wrap but keep pills intact */
   }
   details.alt[open] > summary{background:#eef2ff;border-color:#c7d2fe}
   .alt-body{margin:8px 0 2px 0; padding:8px; border:1px solid #eef2f7; border-radius:8px; background:#fff}
@@ -438,10 +445,10 @@
       const color = val ? '#16a34a' : '#dc2626';
       const bg    = val ? '#dcfce7' : '#fee2e2';
       const border= val ? '#16a34a' : '#dc2626';
-      return `<span style="padding:2px 6px;border:1px solid ${border};border-radius:12px;margin:2px;font-size:12px;background:${bg};color:${color};">${k}</span>`;
+      return `<span style="padding:2px 6px;border:1px solid ${border};border-radius:12px;margin:2px;font-size:12px;background:${bg};color:${color};white-space:nowrap;">${k}</span>`;
     }).join(' ');
     const single = yn(p['Single Tech only'])
-      ? `<span style="padding:2px 8px;border:1px solid #dc2626;border-radius:12px;margin:2px;font-size:12px;background:#fee2e2;color:#dc2626;">Single Tech Only</span>`
+      ? `<span style="padding:2px 8px;border:1px solid #dc2626;border-radius:12px;margin:2px;font-size:12px;background:#fee2e2;color:#dc2626;white-space:nowrap;">Single Tech Only</span>`
       : '';
     return base + (single ? (' ' + single) : '');
   }
@@ -556,13 +563,13 @@
         inc = 0;
         subtitle = `(${money(0)} ex GST • within 50 km)`;
       }
-  
+
       // Update the main figures
       const incEl = document.getElementById('nearest-cost-main');
       const subEl = document.getElementById('nearest-cost-sub');
       if (incEl) incEl.textContent = money(inc);
       if (subEl) subEl.textContent = subtitle;
-  
+
       // also update pulse color to reflect payable vs zero
       const pill = document.getElementById('nearest-cost-pill');
       const pulse = document.getElementById('pulse-nearest');
@@ -574,13 +581,13 @@
         pulse.classList.toggle('pulse-gray', !payable);
       }
     }
-  
+
     // Recompute ALTs (main amount)
     document.querySelectorAll('.alt-cost-main').forEach(span=>{
       const akm = Number(span.dataset.km);
       const amins = Number(span.dataset.mins || 0);
       if (isNaN(akm)) return;
-  
+
       let incAlt = 0;
       const altWithin = akm <= FREE_KM;
       
@@ -588,16 +595,16 @@
         const pricingAlt = computeChargesEx({ kmRounded: akm, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
         incAlt = pricingAlt.totalEx * gstFactor();
       }
-  
+
       span.textContent = money(incAlt);
     });
-  
+
     // Recompute ALTs (subtitle)
     document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
       const akm = Number(sub.dataset.km);
       const amins = Number(sub.dataset.mins || 0);
       if (isNaN(akm)) return;
-  
+
       const altWithin = akm <= FREE_KM;
       let subtitleAlt = '';
       
@@ -615,6 +622,7 @@
       sub.textContent = subtitleAlt;
     });
   }
+
   // Used to label the searched location in copy text
  let lastSearchLabel = '';
 
@@ -939,10 +947,13 @@ function createServicePlanButton(){
         
         let copyLine = '';
         if (!within) {
-          const pricing = computeChargesEx({ kmRounded: Math.ceil(km), mins }, window.ACTIVE_RATE_META);
-        
-          const ar = window.ACTIVE_RATE_META;
-          if (ar.kind === 'tiered_time') {
+          // Use the same calculation that worked for the display
+          const pricing = computeChargesEx(
+            { kmRounded: Math.ceil(km), mins: mins, FREE_KM },
+            window.ACTIVE_RATE_META
+          );
+          
+          if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
             copyLine =
               `Travel charges to ${searchLabel} from ${porLabel} – ${Math.ceil(km)} km (each way), ${Math.round(mins)} min est (one way). ` +
               `Total = ${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST: ` +
@@ -958,7 +969,7 @@ function createServicePlanButton(){
           copyLine =
             `Travel charges to ${searchLabel} from ${porLabel} – within 50 km (no distance/time charge).`;
         }
-        
+
         const copyBtnNearest = document.getElementById('copy-nearest');
         copyBtnNearest?.addEventListener('click', () => {
           navigator.clipboard.writeText(copyLine)
@@ -1070,15 +1081,21 @@ function createServicePlanButton(){
               const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
+
+              // Recalculate for copy to ensure we have fresh data
+              const pricingAltCopy = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
+              const exAltCopy = pricingAltCopy.totalEx;
+              const incAltCopy = exAltCopy * gstFactor();
+
               let copyLineAlt;
               if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
                 copyLineAlt =
                   `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way), ${Math.round(amins)} min est (one way). ` +
-                  `Total = ${money(incAlt)} inc GST (${money(exAlt)} ex GST: distance ${money(pricingAlt.distanceEx)} ex, time ${money(pricingAlt.timeEx)} ex) round trip. ` +
+                  `Total = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST: distance ${money(pricingAltCopy.distanceEx)} ex, time ${money(pricingAltCopy.timeEx)} ex) round trip. ` +
                   `Excludes additional charges (accommodation, ferry etc).`;
               } else {
                 copyLineAlt =
-                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAlt)} inc GST (${money(exAlt)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
+                  `Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST) round trip. Excludes additional charges (accommodation, ferry etc).`;
               }
 
               copyBtnAlt?.addEventListener('click', () => {
