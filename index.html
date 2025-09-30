@@ -240,6 +240,69 @@
   const setStatus = html => statusEl && (statusEl.innerHTML = html);
   const gstFactor = () => 1 + GST_PERCENT;
 
+  // ===== CLIPBOARD FALLBACK SYSTEM =====
+  function setupClipboardFallback() {
+    window.safeCopyToClipboard = async function(text) {
+      // Method 1: Modern clipboard API (works in secure contexts)
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return { success: true, method: 'modern' };
+        }
+      } catch (e) {
+        console.log('Modern clipboard API failed:', e);
+      }
+      
+      // Method 2: execCommand fallback (works in some older browsers)
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.cssText = 'position: fixed; left: -9999px; top: -9999px; opacity: 0;';
+        document.body.appendChild(textArea);
+        textArea.select();
+        textArea.setSelectionRange(0, 99999); // For mobile devices
+        
+        const result = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (result) {
+          return { success: true, method: 'execCommand' };
+        }
+      } catch (e) {
+        console.log('execCommand fallback failed:', e);
+      }
+      
+      // Method 3: Manual copy assistance (ALWAYS works)
+      try {
+        // Create a temporary input and select the text
+        const tempInput = document.createElement('input');
+        tempInput.value = text;
+        tempInput.style.cssText = 'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10000; background: white; padding: 8px; border: 2px solid #2563eb;';
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        tempInput.setSelectionRange(0, 99999);
+        
+        // Show a message asking user to manually copy
+        showToast('Text selected - press Ctrl+C (Cmd+C on Mac) to copy', 5000);
+        
+        // Clean up after 3 seconds
+        setTimeout(() => {
+          if (document.body.contains(tempInput)) {
+            document.body.removeChild(tempInput);
+          }
+        }, 3000);
+        
+        return { success: false, method: 'manual' };
+      } catch (e) {
+        console.log('Manual copy fallback failed:', e);
+        return { success: false, method: 'none' };
+      }
+    };
+  }
+
+  // Initialize clipboard fallback when page loads
+  setupClipboardFallback();
+
   // --- Rate helpers -----------------------------------------------------------
   function isFlatRate(meta){ return meta && (meta.type === 'flat' || typeof meta === 'number'); }
   function flatPerKm(meta){ return typeof meta === 'number' ? meta : Number(meta.perKm || 0); }
@@ -940,13 +1003,13 @@ function createServicePlanButton(){
           pulseNearest.classList.toggle('pulse-gray',  costClassNearest !== 'cost-pay');
         }
 
-        // Nearest COPY BUTTON (Copied toast = 4s)
+        // Nearest COPY BUTTON with enhanced fallback
         const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
         const searchLabel = lastSearchLabel || `Selected location`;
         const currency = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: CURRENCY }).format(v);
 
         const copyBtnNearest = document.getElementById('copy-nearest');
-        copyBtnNearest?.addEventListener('click', () => {
+        copyBtnNearest?.addEventListener('click', async () => {
           // Recalculate with current rate every time copy is clicked
           const currentKm = Math.ceil(km);
           const currentMins = Math.round(mins);
@@ -984,9 +1047,18 @@ function createServicePlanButton(){
               `${exclusionText}`;
           }
 
-          navigator.clipboard.writeText(copyLine)
-            .then(()=> { showToast(`Copied to clipboard: ${copyLine}`, 4000); flashPulse(copyBtnNearest, 'Copied'); })
-            .catch(()=> showToast('Copy failed', 4000));
+          // Use the enhanced clipboard system
+          const result = await window.safeCopyToClipboard(copyLine);
+          if (result.success) {
+            showToast(`Copied to clipboard: ${copyLine}`, 4000);
+            flashPulse(copyBtnNearest, 'Copied');
+          } else if (result.method === 'manual') {
+            showToast('Text selected - press Ctrl+C (Cmd+C on Mac) to copy', 5000);
+            flashPulse(copyBtnNearest, 'Please copy manually');
+          } else {
+            showToast('Copy failed - please copy manually', 4000);
+            flashPulse(copyBtnNearest, 'Failed');
+          }
         });
 
         // Fit bounds with asymmetric padding so left panel doesn't cover lines
@@ -1088,13 +1160,13 @@ function createServicePlanButton(){
                 : { type:'LineString', coordinates:[queryCoordGlobal, lngLat] };
               addOrUpdateLine(map, layerId, color, geomToDraw);
 
-              // ALT COPY BUTTON (Copied toast = 4s)
+              // ALT COPY BUTTON with enhanced fallback
               const porLabelAlt = `${pf.POR || ''}, ${pf.State || ''}`.replace(/\s+,/g, ',').trim();
               const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
 
-              copyBtnAlt?.addEventListener('click', () => {
+              copyBtnAlt?.addEventListener('click', async () => {
                 // Recalculate with current rate every time copy is clicked
                 const pricingAltCopy = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
                 const exAltCopy = pricingAltCopy.totalEx;
@@ -1123,13 +1195,21 @@ function createServicePlanButton(){
                     `${exclusionTextAlt}`;
                 }
 
-                navigator.clipboard.writeText(copyLineAlt)
-                  .then(()=> {
-                    showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
-                    if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
-                    else { flashPulse(copyBtnAlt, 'Copied'); }
-                  })
-                  .catch(()=> showToast('Copy failed', 4000));
+                // Use the enhanced clipboard system
+                const result = await window.safeCopyToClipboard(copyLineAlt);
+                if (result.success) {
+                  showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
+                  if(pulseSpan) { pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
+                  else { flashPulse(copyBtnAlt, 'Copied'); }
+                } else if (result.method === 'manual') {
+                  showToast('Text selected - press Ctrl+C (Cmd+C on Mac) to copy', 5000);
+                  if(pulseSpan) { pulseSpan.textContent = 'Please copy manually'; pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
+                  else { flashPulse(copyBtnAlt, 'Please copy manually'); }
+                } else {
+                  showToast('Copy failed - please copy manually', 4000);
+                  if(pulseSpan) { pulseSpan.textContent = 'Failed'; pulseSpan.classList.add('show'); setTimeout(()=> pulseSpan.classList.remove('show'),1200); }
+                  else { flashPulse(copyBtnAlt, 'Failed'); }
+                }
               });
 
               const popup = new mapboxgl.Popup({offset:12, closeOnClick:false})
