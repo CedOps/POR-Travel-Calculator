@@ -2,7 +2,6 @@ POR,Preferred Resource,Lat,Lng,State,Category,CCTV,Alarm,Access Control,Install,
 Melbourne,ADT,-37.8136,144.9631,VIC,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
 Bendigo,Bendigo Security - Lisa Lohse,-36.757,144.2794,VIC,Subcontractor,YES,YES,YES,YES,YES,NO,(03)54440154,office@bendigosecurity.com.au,Will generally travel no more than ~2hrs,TRUE
 Shepparton,Insight Protection - Mark Liversidge,-36.3805,145.399,VIC,Subcontractor,YES,YES,YES,YES,YES,NO,(03)58212677,service@insightprotection.com.au,Has NSW Licence and will travel to NSW. Will also work along VIC/NSW Border.,TRUE
-Mildura,Sunraysia Security - Sam,-34.1855,142.1625,VIC,Subcontractor,YES,YES,NO,YES,YES,NO,(03)50213888,sam@sunraysiasecurity.com.au; admin@sunraysiasecurity.com.au,LIMITED SKILLSET - must check with SDC if not NEO/Qol/SYB/Hik. Limitted Travel: Alternate Resource: Insight Protection (Shepparton). No SA Licence.,TRUE
 Mulgrave,ADT,-37.9187,145.1588,VIC,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
 Sydney,ADT,-33.8727,151.2057,NSW,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
 Rydalmere,ADT,-33.8123,151.0418,NSW,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Subcontractors Available,TRUE
@@ -39,6 +38,7 @@ Brisbane,ADT,-27.4705,153.026,QLD,ADT,YES,YES,YES,YES,YES,NO,131005,service@adts
 Gold Coast,ADT,-27.9769,153.3809,QLD,ADT,YES,YES,YES,YES,YES,NO,131005,service@adtsecurity.com.au,In House Techs - Certain Techs can travel into NSW.,TRUE
 Hobart,Coverall Security,-42.8826,147.3257,TAS,Subcontractor,YES,YES,YES,YES,YES,NO,(03)61082520,service@coverallsecurity.com.au,Covers all of TAS,TRUE
 Toowoomba,ADT,-27.5598,151.9507,QLD,ADT,YES,YES,YES,YES,YES,YES,131005,service@adtsecurity.com.au,In House Techs,TRUE
+
 
 
 
