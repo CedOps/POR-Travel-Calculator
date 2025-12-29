@@ -1,0 +1,18 @@
+[
+  {
+    "plan": "ADT Residential Service Plan",
+    "calloutCost": 218.39,
+    "calloutDurationMins": 30,
+    "incrementCost": 61.37,
+    "incrementDurationMins": 15,
+    "notes": ""
+  },
+  {
+    "plan": "ADT Commercial Service Plan",
+    "calloutCost": 273.02,
+    "calloutDurationMins": 30,
+    "incrementCost": 126.04,
+    "incrementDurationMins": 30,
+    "notes": ""
+  }
+]
