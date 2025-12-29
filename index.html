@@ -121,8 +121,9 @@
   .copy-pulse.pulse-amber { color:#b45309; } /* amber-700 */
   .copy-pulse.pulse-gray  { color:#374151; } /* gray-700 */
 
-    /* Modal styles */
-  #service-plan-btn {
+  /* Modal styles */
+  #service-plan-btn,
+  #adt-service-plans-btn {
     min-width: 160px;
     padding: 8px 14px;
     background: #2563eb;
@@ -135,16 +136,17 @@
     transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.1s ease;
   }
 
-  #service-plan-btn:hover {
+  #service-plan-btn:hover,
+  #adt-service-plans-btn:hover {
     background: #1e4ed8;
     box-shadow: 0 4px 12px rgba(0,0,0,0.2);
     transform: translateY(-1px); /* subtle lift effect */
   }
-  #service-plan-btn:active {
+  #service-plan-btn:active,
+  #adt-service-plans-btn:active {
     background: #1e40af;
     transform: translateY(1px) scale(0.98);
   }
-
 
   .mapboxgl-ctrl.service-plan-ctrl {
     margin-top: 8px; /* gives spacing below the Rate dropdown */
@@ -200,18 +202,17 @@
 <div id="status">Starting…</div>
 <div id="toast">C.C.</div>
 
-
-<!-- Modal Popup -->
+<!-- Modal Popup (reused by both buttons) -->
 <div id="service-plan-modal">
   <div class="modal-content">
     <button id="close-service-plan">×</button>
-    <h2 style="margin-top:0;margin-bottom:12px;color:#2563eb;">Service Plan Definitions</h2>
+    <h2 id="service-plan-modal-title" style="margin-top:0;margin-bottom:12px;color:#2563eb;">Service Plan Definitions</h2>
     <div id="service-plan-content">
       <!-- Dynamic content goes here -->
     </div>
   </div>
 </div>
-  
+
 <script>
 (() => {
   // ===== CONFIG =====
@@ -252,7 +253,7 @@
       } catch (e) {
         console.log('Modern clipboard API failed:', e);
       }
-      
+
       // Method 2: execCommand fallback (works in some older browsers)
       try {
         const textArea = document.createElement('textarea');
@@ -261,37 +262,34 @@
         document.body.appendChild(textArea);
         textArea.select();
         textArea.setSelectionRange(0, 99999); // For mobile devices
-        
+
         const result = document.execCommand('copy');
         document.body.removeChild(textArea);
-        
+
         if (result) {
           return { success: true, method: 'execCommand' };
         }
       } catch (e) {
         console.log('execCommand fallback failed:', e);
       }
-      
+
       // Method 3: Manual copy assistance (ALWAYS works)
       try {
-        // Create a temporary input and select the text
         const tempInput = document.createElement('input');
         tempInput.value = text;
         tempInput.style.cssText = 'position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 10000; background: white; padding: 8px; border: 2px solid #2563eb;';
         document.body.appendChild(tempInput);
         tempInput.select();
         tempInput.setSelectionRange(0, 99999);
-        
-        // Show a message asking user to manually copy
+
         showToast('Text selected - press Ctrl+C (Cmd+C on Mac) to copy', 5000);
-        
-        // Clean up after 3 seconds
+
         setTimeout(() => {
           if (document.body.contains(tempInput)) {
             document.body.removeChild(tempInput);
           }
         }, 3000);
-        
+
         return { success: false, method: 'manual' };
       } catch (e) {
         console.log('Manual copy fallback failed:', e);
@@ -300,14 +298,13 @@
     };
   }
 
-  // Initialize clipboard fallback when page loads
   setupClipboardFallback();
 
   // --- Rate helpers -----------------------------------------------------------
   function isFlatRate(meta){ return meta && (meta.type === 'flat' || typeof meta === 'number'); }
   function flatPerKm(meta){ return typeof meta === 'number' ? meta : Number(meta.perKm || 0); }
   function isTieredTime(meta){ return meta && meta.type === 'tiered_time'; }
-  
+
   function rateLabel(name, meta){
     if (isFlatRate(meta)) return `${name} ($${flatPerKm(meta).toFixed(2)}/km ex GST)`;
     if (isTieredTime(meta)) {
@@ -317,7 +314,7 @@
     }
     return name;
   }
-  
+
   function normalizeRate(meta){
     if (isFlatRate(meta)) {
       return { kind: 'flat', perKm: flatPerKm(meta) };
@@ -335,20 +332,19 @@
     }
     return { kind: 'flat', perKm: flatPerKm(2.08) };
   }
-  
-  // Compute distance/time ex-GST based on active rate and distances
+
   function computeChargesEx({ kmRounded, mins, FREE_KM }, activeRate){
     const chargeableKm = Math.max(0, kmRounded - FREE_KM);
     let distanceEx = 0, timeEx = 0, kmRateApplied = 0;
-  
+
     if (activeRate.kind === 'flat') {
       kmRateApplied = activeRate.perKm;
       distanceEx = chargeableKm * 2 * activeRate.perKm; // round trip
     } else if (activeRate.kind === 'tiered_time') {
       const kmRate = (kmRounded > activeRate.tier2Cut) ? activeRate.tier2Rate : activeRate.tier1Rate;
       kmRateApplied = kmRate;
-      distanceEx = chargeableKm * 2 * kmRate; // round trip distance
-  
+      distanceEx = chargeableKm * 2 * kmRate;
+
       const inc = Math.max(1, activeRate.timeIncMin);
       const roundedOneWayMin = Math.ceil(mins / inc) * inc;
       const roundedRoundTripHours = (roundedOneWayMin * 2) / 60;
@@ -357,34 +353,22 @@
     return { distanceEx, timeEx, totalEx: distanceEx + timeEx, kmRateApplied };
   }
 
-
   // Modal close handlers (× button, overlay click, ESC key)
   const modalEl = document.getElementById('service-plan-modal');
   const closePlanBtn = document.getElementById('close-service-plan');
 
   if (modalEl && closePlanBtn) {
-    // × button
-    closePlanBtn.addEventListener('click', () => {
-      modalEl.style.display = 'none';
-    });
+    closePlanBtn.addEventListener('click', () => { modalEl.style.display = 'none'; });
 
-    // click overlay
     modalEl.addEventListener('click', (e) => {
-      if (e.target === modalEl) {
-      modalEl.style.display = 'none';
-      }
+      if (e.target === modalEl) modalEl.style.display = 'none';
     });
 
-    // ESC key
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && modalEl.style.display === 'block') {
-        modalEl.style.display = 'none';
-      }
+      if (e.key === 'Escape' && modalEl.style.display === 'block') modalEl.style.display = 'none';
     });
   }
 
-  
-  // Toast helper: default 2s (CC), copy actions call with 4s
   function showToast(msg='C.C.', duration=2000){
     toastEl.textContent=msg;
     toastEl.classList.add('show');
@@ -406,65 +390,63 @@
   }
 
   function createRateControl(){
-  class RateControl {
-    onAdd(map){
-      const container = document.createElement('div');
-      container.className = 'mapboxgl-ctrl rate-ctrl';
+    class RateControl {
+      onAdd(map){
+        const container = document.createElement('div');
+        container.className = 'mapboxgl-ctrl rate-ctrl';
 
-      const label = document.createElement('label');
-      label.textContent = 'Rate:';
+        const label = document.createElement('label');
+        label.textContent = 'Rate:';
 
-      const sel = document.createElement('select');
+        const sel = document.createElement('select');
 
-      Object.entries(RATES).forEach(([name, meta])=>{
-        const opt = document.createElement('option');
-        opt.value = name; // store the name
-        opt.textContent = rateLabel(name, meta);
-        sel.appendChild(opt);
-      });
+        Object.entries(RATES).forEach(([name, meta])=>{
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = rateLabel(name, meta);
+          sel.appendChild(opt);
+        });
 
-      // default to first entry
-      sel.value = Object.keys(RATES)[0];
-      window.ACTIVE_RATE_NAME = sel.value;
-      window.ACTIVE_RATE_META = normalizeRate(RATES[sel.value]);
-      if (window.ACTIVE_RATE_META.kind === 'flat') {
-        RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
-      }
-
-      sel.addEventListener('change', ()=>{
+        sel.value = Object.keys(RATES)[0];
         window.ACTIVE_RATE_NAME = sel.value;
         window.ACTIVE_RATE_META = normalizeRate(RATES[sel.value]);
-
         if (window.ACTIVE_RATE_META.kind === 'flat') {
           RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
-          showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
-        } else {
-          const ar = window.ACTIVE_RATE_META;
-          showToast(`Rate → tiered $${ar.tier1Rate.toFixed(2)}/$${ar.tier2Rate.toFixed(2)} + $${ar.timePerHour}/h`);
         }
-        refreshCostsFromStored();
-      });
 
-      container.appendChild(label);
-      container.appendChild(sel);
+        sel.addEventListener('change', ()=>{
+          window.ACTIVE_RATE_NAME = sel.value;
+          window.ACTIVE_RATE_META = normalizeRate(RATES[sel.value]);
 
-      setTimeout(()=>{
-        const corner = document.querySelector('.mapboxgl-ctrl-top-right');
-        const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
-        if (corner && geocoder) {
-          if (geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
-          else corner.appendChild(container);
-        }
-      },0);
+          if (window.ACTIVE_RATE_META.kind === 'flat') {
+            RATE_PER_KM = window.ACTIVE_RATE_META.perKm;
+            showToast(`Rate → $${RATE_PER_KM.toFixed(2)}/km ex GST`);
+          } else {
+            const ar = window.ACTIVE_RATE_META;
+            showToast(`Rate → tiered $${ar.tier1Rate.toFixed(2)}/$${ar.tier2Rate.toFixed(2)} + $${ar.timePerHour}/h`);
+          }
+          refreshCostsFromStored();
+        });
 
-      return container;
+        container.appendChild(label);
+        container.appendChild(sel);
+
+        setTimeout(()=>{
+          const corner = document.querySelector('.mapboxgl-ctrl-top-right');
+          const geocoder = document.querySelector('.mapboxgl-ctrl-geocoder');
+          if (corner && geocoder) {
+            if (geocoder.nextSibling) corner.insertBefore(container, geocoder.nextSibling);
+            else corner.appendChild(container);
+          }
+        },0);
+
+        return container;
+      }
+      onRemove(){ this._container?.remove(); }
     }
-    onRemove(){ this._container?.remove(); }
+    return new RateControl();
   }
-  return new RateControl();
-}
 
-  
   // Helpers
   const yn  = v => String(v||'').trim().toLowerCase()==='yes' || String(v||'').trim().toLowerCase()==='true';
   const num = v => { if(v==null) return NaN; const s=String(v).trim().replace(/[^\d.\-+eE]/g,''); return parseFloat(s); };
@@ -529,7 +511,6 @@
     </div>`;
   }
 
-  // Instruction builder
   function buildInstructions({accom,ferry,outOfState,state}){
     const parts=[];
     if(accom) parts.push('Accommodation charges may apply');
@@ -595,9 +576,8 @@
   let queryCoordGlobal = null;
   let nearestCoordGlobal = null;
   const activeAltCoords = new Map();
-  let initialBounds = null; // for clearing back to full-map
+  let initialBounds = null;
 
-  // Asymmetric padding so content isn't hidden under the left panel
   function panelPadding(){
     const w = (statusEl && statusEl.offsetWidth) ? statusEl.offsetWidth : 360;
     const left = Math.min(Math.max(w + 20, 220), 520);
@@ -608,15 +588,15 @@
     const km = Number(statusEl?.dataset?.nearestKm || NaN);
     const mins = Number(statusEl?.dataset?.nearestMins || 0);
     const within = statusEl?.dataset?.nearestWithin === '1';
-    
+
     if (!isNaN(km)) {
       let ex = 0, inc = 0, subtitle = '';
-      
+
       if (!within) {
         const pricing = computeChargesEx({ kmRounded: km, mins: mins, FREE_KM }, window.ACTIVE_RATE_META);
         ex = pricing.totalEx;
         inc = ex * gstFactor();
-        
+
         if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
           subtitle = `(${money(pricing.distanceEx)} ex GST + ${money(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km ex GST, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
         } else {
@@ -627,13 +607,11 @@
         subtitle = `(${money(0)} ex GST • within 50 km)`;
       }
 
-      // Update the main figures
       const incEl = document.getElementById('nearest-cost-main');
       const subEl = document.getElementById('nearest-cost-sub');
       if (incEl) incEl.textContent = money(inc);
       if (subEl) subEl.textContent = subtitle;
 
-      // also update pulse color to reflect payable vs zero
       const pill = document.getElementById('nearest-cost-pill');
       const pulse = document.getElementById('pulse-nearest');
       if (pill && pulse) {
@@ -645,7 +623,6 @@
       }
     }
 
-    // Recompute ALTs (main amount)
     document.querySelectorAll('.alt-cost-main').forEach(span=>{
       const akm = Number(span.dataset.km);
       const amins = Number(span.dataset.mins || 0);
@@ -653,7 +630,7 @@
 
       let incAlt = 0;
       const altWithin = akm <= FREE_KM;
-      
+
       if (!altWithin) {
         const pricingAlt = computeChargesEx({ kmRounded: akm, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
         incAlt = pricingAlt.totalEx * gstFactor();
@@ -662,7 +639,6 @@
       span.textContent = money(incAlt);
     });
 
-    // Recompute ALTs (subtitle)
     document.querySelectorAll('.alt-cost-sub').forEach(sub=>{
       const akm = Number(sub.dataset.km);
       const amins = Number(sub.dataset.mins || 0);
@@ -670,7 +646,7 @@
 
       const altWithin = akm <= FREE_KM;
       let subtitleAlt = '';
-      
+
       if (!altWithin) {
         const pricingAlt = computeChargesEx({ kmRounded: akm, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
         if (window.ACTIVE_RATE_META?.kind === 'tiered_time') {
@@ -681,15 +657,13 @@
       } else {
         subtitleAlt = `(${money(0)} ex GST • within 50 km)`;
       }
-      
+
       sub.textContent = subtitleAlt;
     });
   }
 
-  // Used to label the searched location in copy text
- let lastSearchLabel = '';
+  let lastSearchLabel = '';
 
-  // Mini pulse next to copy icon
   function flashPulse(btn, text='Copied'){
     let pulse = btn.nextElementSibling;
     if(!pulse || !pulse.classList.contains('copy-pulse')){
@@ -702,74 +676,143 @@
     setTimeout(()=> pulse.classList.remove('show'), 1200);
   }
 
-function createServicePlanButton(){
-  class ServicePlanControl {
-    onAdd(map){
-      // Container for button
-      const container = document.createElement('div');
-      container.className = 'mapboxgl-ctrl service-plan-ctrl';
-      container.style.display = 'flex';
-      container.style.justifyContent = 'flex-end';
-      container.style.marginTop = '8px';
+  // ===== Modal Button #1: Service Plan Definitions (existing behavior) =====
+  function createServicePlanButton(){
+    class ServicePlanControl {
+      onAdd(map){
+        const container = document.createElement('div');
+        container.className = 'mapboxgl-ctrl service-plan-ctrl';
+        container.style.display = 'flex';
+        container.style.justifyContent = 'flex-end';
+        container.style.marginTop = '8px';
 
-    // The button itself
-    const btn = document.createElement('button');
-    btn.id = 'service-plan-btn';
-    btn.textContent = 'Service Plan Definitions';   // or 'Service Plan Info'
-    btn.type = 'button';
+        const btn = document.createElement('button');
+        btn.id = 'service-plan-btn';
+        btn.textContent = 'Service Plan Definitions';
+        btn.type = 'button';
+        container.appendChild(btn);
 
-    // style
-    btn.style.padding = '8px 14px';
-    btn.style.background = '#2563eb';
-    btn.style.color = '#fff';
-    btn.style.border = 'none';
-    btn.style.borderRadius = '8px';
-    btn.style.boxShadow = '0 1px 6px rgba(0,0,0,.12)';
-    btn.style.fontSize = '14px';
-    btn.style.cursor = 'pointer';
-
-    container.appendChild(btn);
-
-
-      // Modal logic remains the same
-      btn.addEventListener('click', async () => {
-        try {
-          const res = await fetch('service-plans.json');
-          const plans = await res.json();
+        btn.addEventListener('click', async () => {
           const contentDiv = document.getElementById('service-plan-content');
-        contentDiv.innerHTML = plans.map(plan =>
-          `<details>
-             <summary>${plan.plan}</summary>
-             <div>${plan.definition.replace(/\n/g, "<br>")}</div>
-           </details>`
-        ).join('');
+          const titleEl = document.getElementById('service-plan-modal-title');
+          if (titleEl) titleEl.textContent = 'Service Plan Definitions';
 
-        // Ensure all start collapsed
-        const detailsEls = contentDiv.querySelectorAll('details');
-        detailsEls.forEach(d => { d.open = false; });
+          try {
+            const res = await fetch('service-plans.json', { cache: 'no-store' });
+            const plans = await res.json();
 
-        // Accordion behavior: when one opens, close the others
-        detailsEls.forEach(d => {
-          d.addEventListener('toggle', () => {
-            if (d.open) {
-              detailsEls.forEach(o => { if (o !== d) o.open = false; });
-            }
-          });
+            contentDiv.innerHTML = plans.map(plan =>
+              `<details>
+                 <summary>${plan.plan}</summary>
+                 <div>${plan.definition.replace(/\n/g, "<br>")}</div>
+               </details>`
+            ).join('');
+
+            const detailsEls = contentDiv.querySelectorAll('details');
+            detailsEls.forEach(d => { d.open = false; });
+
+            detailsEls.forEach(d => {
+              d.addEventListener('toggle', () => {
+                if (d.open) detailsEls.forEach(o => { if (o !== d) o.open = false; });
+              });
+            });
+
+          } catch (err) {
+            contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load service plans.</div>';
+          }
+
+          document.getElementById('service-plan-modal').style.display = 'block';
         });
 
-        } catch (err) {
-          contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load service plans.</div>';
-        }
-        document.getElementById('service-plan-modal').style.display = 'block';
-      });
-
-      return container;
+        return container;
+      }
+      onRemove(){ this._container?.remove(); }
     }
-    onRemove(){ this._container?.remove(); }
+    return new ServicePlanControl();
   }
-  return new ServicePlanControl();
-}
-  
+
+  // ===== Modal Button #2: ADT Service Plans (NEW) =====
+  // Expects a file: adt-service-plans.json
+  // Example schema:
+  // [
+  //   {"plan":"ADT Residential Service Plan","calloutCost":99,"calloutDurationMins":30,"incrementCost":45,"incrementDurationMins":15,"notes":""},
+  //   {"plan":"ADT Commercial Service Plan","calloutCost":120,"calloutDurationMins":30,"incrementCost":55,"incrementDurationMins":15,"notes":""}
+  // ]
+  function createADTServicePlansButton(){
+    class ADTPlansControl {
+      onAdd(map){
+        const container = document.createElement('div');
+        container.className = 'mapboxgl-ctrl service-plan-ctrl';
+        container.style.display = 'flex';
+        container.style.justifyContent = 'flex-end';
+        container.style.marginTop = '8px';
+
+        const btn = document.createElement('button');
+        btn.id = 'adt-service-plans-btn';
+        btn.textContent = 'ADT Service Plans';
+        btn.type = 'button';
+        container.appendChild(btn);
+
+        btn.addEventListener('click', async () => {
+          const contentDiv = document.getElementById('service-plan-content');
+          const titleEl = document.getElementById('service-plan-modal-title');
+          if (titleEl) titleEl.textContent = 'ADT Service Plans';
+
+          const fmtMoney = (n) => {
+            const v = Number(n || 0);
+            return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(v);
+          };
+
+          const sentence = (p) => {
+            const calloutMins = Number(p.calloutDurationMins || 0);
+            const incMins = Number(p.incrementDurationMins || 0);
+            return `Callout (includes first ${calloutMins} mins): ${fmtMoney(p.calloutCost)}, ongoing increments of labour: ${fmtMoney(p.incrementCost)} per ${incMins} mins thereafter`;
+          };
+
+          try {
+            const res = await fetch('adt-service-plans.json', { cache: 'no-store' });
+            const plans = await res.json();
+
+            contentDiv.innerHTML = plans.map(p => `
+              <details>
+                <summary>${p.plan}</summary>
+                <div>
+                  <div style="font-weight:600; margin-bottom:10px;">${sentence(p)}</div>
+
+                  <div><b>Callout Cost:</b> ${fmtMoney(p.calloutCost)}</div>
+                  <div><b>Callout Duration:</b> ${Number(p.calloutDurationMins || 0)} mins</div>
+
+                  <div style="margin-top:10px;"><b>Increments Labour Cost:</b> ${fmtMoney(p.incrementCost)}</div>
+                  <div><b>Increments Labour Duration:</b> ${Number(p.incrementDurationMins || 0)} mins</div>
+
+                  ${p.notes ? `<div style="margin-top:12px;"><b>Notes:</b> ${String(p.notes)}</div>` : ``}
+                </div>
+              </details>
+            `).join('');
+
+            const detailsEls = contentDiv.querySelectorAll('details');
+            detailsEls.forEach(d => { d.open = false; });
+
+            detailsEls.forEach(d => {
+              d.addEventListener('toggle', () => {
+                if (d.open) detailsEls.forEach(o => { if (o !== d) o.open = false; });
+              });
+            });
+
+          } catch (err) {
+            contentDiv.innerHTML = '<div style="color:#b91c1c;">Failed to load ADT service plans.</div>';
+          }
+
+          document.getElementById('service-plan-modal').style.display = 'block';
+        });
+
+        return container;
+      }
+      onRemove(){ this._container?.remove(); }
+    }
+    return new ADTPlansControl();
+  }
+
   async function main(){
     await loadConfig();
     setStatus('Initialising map…');
@@ -780,8 +823,11 @@ function createServicePlanButton(){
     const geocoder=new MapboxGeocoder({accessToken:MAPBOX_TOKEN,mapboxgl,marker:false,placeholder:'Search address or postcode…',countries:COUNTRIES});
     map.addControl(geocoder,'top-right');
     map.addControl(createRateControl(),'top-right');
+
+    // Buttons (Modal)
     map.addControl(createServicePlanButton(),'top-right');
-    
+    map.addControl(createADTServicePlansButton(),'top-right');
+
     const rows=await loadCSV(CSV_URL);
     const feats=rows.map((r,i)=>rowToFeature(r,i)).filter(Boolean);
 
@@ -795,7 +841,6 @@ function createServicePlanButton(){
     }
 
     async function showNearestFrom(coord, stateAbbrev){
-      // FIX: Ensure ACTIVE_RATE_META is always defined before use
       if (!window.ACTIVE_RATE_META) {
         window.ACTIVE_RATE_META = normalizeRate(RATES[Object.keys(RATES)[0]]);
         if (window.ACTIVE_RATE_META.kind === 'flat') {
@@ -822,14 +867,9 @@ function createServicePlanButton(){
 
         let within=false, km=slKm, mins=(slKm/AVG_SPEED_KPH)*60, modeLabel='straight-line', routeGeom=null, ferry=false;
 
-        // --- Correct grace logic ---
-        // 1) Very short SL: within, no directions call
         if (slKm <= SL_TRIGGER_KM) {
           within = true;
-          // km remains slKm
-        }
-        // 2) SL within free circle: check road with grace allowance
-        else if (slKm <= FREE_KM) {
+        } else if (slKm <= FREE_KM) {
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
             const roadKm=r.km, roadMin=r.minutes; ferry=!!r.ferry;
@@ -840,12 +880,10 @@ function createServicePlanButton(){
             }
           }catch(e){
             console.warn('Nearest Directions failed (inside circle); falling back to SL as within', e);
-            within = true; // inside circle → treat within if directions fail
+            within = true;
             km = slKm; mins = (slKm/AVG_SPEED_KPH)*60; routeGeom=null; modeLabel='straight-line';
           }
-        }
-        // 3) SL already outside free circle: NO GRACE, use road distance and charge
-        else {
+        } else {
           try{
             const r = await getDriving(coord, nearest.geometry.coordinates);
             within=false; km=r.km; mins=r.minutes; routeGeom=r.geometry; modeLabel='road'; ferry=!!r.ferry;
@@ -855,10 +893,8 @@ function createServicePlanButton(){
           }
         }
 
-        // ROUND distance up (drives both display and cost)
         const kmRounded = Math.ceil(km);
 
-        // DRAW: road if outside and we have geometry; otherwise draw straight line
         if (!within && routeGeom) {
           addOrUpdateLine(map,'route-nearest',NEAREST_COLOR,routeGeom);
         } else {
@@ -876,16 +912,15 @@ function createServicePlanButton(){
         const badgeText  = within ? 'Within 50 km' : 'Outside 50 km';
         const outOfStateNearest = String(nearest.properties.State).toUpperCase() !== String(stateAbbrev||'').toUpperCase();
 
-        // COSTS (use rounded km)
         let ex=0, inc=0, subtitle='', kmRateApplied = RATE_PER_KM;
         if(!within){
           const pricing = computeChargesEx(
             { kmRounded: Math.ceil(km), mins: mins, FREE_KM },
-            window.ACTIVE_RATE_META // Now guaranteed to be defined
+            window.ACTIVE_RATE_META
           );
           ex  = pricing.totalEx;
           kmRateApplied = pricing.kmRateApplied;
-        
+
           const currency = v => new Intl.NumberFormat('en-AU',{style:'currency',currency:CURRENCY}).format(v);
           if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
             subtitle = `(${currency(pricing.distanceEx)} + ${currency(pricing.timeEx)} ex GST • $${pricing.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`;
@@ -899,12 +934,10 @@ function createServicePlanButton(){
           subtitle = `(${currency(0)} ex GST • within 50 km)`;
         }
         const costClassNearest = inc > 0.0001 ? 'cost-pay' : 'cost-zero';
-        
-        // store for refresh
+
         statusEl.dataset.nearestKm = String(Math.ceil(km));
         statusEl.dataset.nearestMins = String(Math.round(mins));
         statusEl.dataset.nearestWithin = within ? '1' : '0';
-
 
         const needsAccom = (!within) && (km > ACCOM_KM || mins > ACCOM_MIN);
         const p=nearest.properties;
@@ -993,49 +1026,43 @@ function createServicePlanButton(){
           ${altHtml ? `<hr class="alts-sep"><div class="row" style="margin-top:0"><b>Alternate PORs:</b></div>${altHtml}` : ''}
         `);
 
-        // store rounded km for later recalc on rate change
         statusEl.dataset.nearestKm = String(Math.ceil(km));
 
-        // Set pulse color to match the nearest cost pill
         const pulseNearest = document.getElementById('pulse-nearest');
         if (pulseNearest) {
           pulseNearest.classList.toggle('pulse-amber', costClassNearest === 'cost-pay');
           pulseNearest.classList.toggle('pulse-gray',  costClassNearest !== 'cost-pay');
         }
 
-        // Nearest COPY BUTTON with enhanced fallback
         const porLabel = `${p.POR || ''}, ${p.State || ''}`.replace(/\s+,/g, ',').trim();
         const searchLabel = lastSearchLabel || `Selected location`;
         const currency = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: CURRENCY }).format(v);
 
         const copyBtnNearest = document.getElementById('copy-nearest');
         copyBtnNearest?.addEventListener('click', async () => {
-          // Recalculate with current rate every time copy is clicked
           const currentKm = Math.ceil(km);
           const currentMins = Math.round(mins);
-          
+
           let copyLine = '';
-          const exclusionText = (needsAccom || ferry) ? 
+          const exclusionText = (needsAccom || ferry) ?
             `\nExcludes additional charges (${needsAccom ? 'accommodation' : ''}${needsAccom && ferry ? ', ' : ''}${ferry ? 'ferry' : ''} etc).` : '';
-          
+
           if (!within) {
             const pricing = computeChargesEx(
               { kmRounded: currentKm, mins: currentMins, FREE_KM },
               window.ACTIVE_RATE_META
             );
-            
+
             if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
-              // ANZ/Suncorp format
               const distanceCharge = pricing.distanceEx * gstFactor();
               const timeCharge = pricing.timeEx * gstFactor();
               const totalCharge = pricing.totalEx * gstFactor();
-              
+
               copyLine =
                 `${window.ACTIVE_RATE_NAME} Travel charges to ${searchLabel} from ${porLabel} (return) – ${currentKm} km (each way) @ $${pricing.kmRateApplied.toFixed(2)}/km ex GST = ${currency(distanceCharge)} + ${currentMins} mins @ $${window.ACTIVE_RATE_META.timePerHour}/hr = ${currency(timeCharge)}.\n` +
                 `Total Travel Charge: ${currency(totalCharge)}.` +
                 `${exclusionText}`;
             } else {
-              // Default flat rate format
               copyLine =
                 `${window.ACTIVE_RATE_NAME} Travel charges to ${searchLabel} from ${porLabel} – ${currentKm} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ` +
                 `${currency(pricing.totalEx * gstFactor())} inc GST (${currency(pricing.totalEx)} ex GST) round trip.` +
@@ -1047,7 +1074,6 @@ function createServicePlanButton(){
               `${exclusionText}`;
           }
 
-          // Use the enhanced clipboard system
           const result = await window.safeCopyToClipboard(copyLine);
           if (result.success) {
             showToast(`Copied to clipboard: ${copyLine}`, 4000);
@@ -1061,12 +1087,10 @@ function createServicePlanButton(){
           }
         });
 
-        // Fit bounds with asymmetric padding so left panel doesn't cover lines
         const b=new mapboxgl.LngLatBounds();
         b.extend(queryCoordGlobal); b.extend(nearestCoordGlobal);
         map.fitBounds(b,{ padding: panelPadding(), maxZoom:10 });
 
-        // wire alternates
         document.querySelectorAll('details.alt').forEach((el)=>{
           const idx = Number(el.dataset.altIndex);
           const alt  = alts[idx];
@@ -1099,16 +1123,13 @@ function createServicePlanButton(){
                 }
               } else { akm=alt.slKm; amins=(akm/AVG_SPEED_KPH)*60; amode='straight'; outside=false; ferryAlt=false; }
 
-              // ROUND alt distance up
               const akmRounded = Math.ceil(akm);
 
-              // Costs (rounded distance) — use computeChargesEx so tiered/time rates work
               const pricingAlt = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
               const exAlt = pricingAlt.totalEx;
               const incAlt = exAlt * gstFactor();
               const costClassAlt = incAlt > 0.0001 ? 'cost-pay' : 'cost-zero';
-              
-              // Build subtitle string for pill
+
               const subtitleAlt = (window.ACTIVE_RATE_META.kind === 'tiered_time')
                 ? `(${money(pricingAlt.distanceEx)} + ${money(pricingAlt.timeEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km, $${window.ACTIVE_RATE_META.timePerHour}/h)`
                 : `(${money(pricingAlt.distanceEx)} ex GST • $${pricingAlt.kmRateApplied.toFixed(2)}/km ex GST)`;
@@ -1154,48 +1175,42 @@ function createServicePlanButton(){
                   : ``}
               `;
 
-              // DRAW LINE for ALT: road if outside, else straight
               const geomToDraw = (outside && ageom)
                 ? ageom
                 : { type:'LineString', coordinates:[queryCoordGlobal, lngLat] };
               addOrUpdateLine(map, layerId, color, geomToDraw);
 
-              // ALT COPY BUTTON with enhanced fallback
               const porLabelAlt = `${pf.POR || ''}, ${pf.State || ''}`.replace(/\s+,/g, ',').trim();
               const copyBtnAlt = document.getElementById(`copy-alt-${idx}`);
               const lineContainer = copyBtnAlt?.parentElement;
               const pulseSpan = lineContainer?.querySelector('.copy-pulse');
+              const currency = v => new Intl.NumberFormat('en-AU', { style: 'currency', currency: CURRENCY }).format(v);
 
               copyBtnAlt?.addEventListener('click', async () => {
-                // Recalculate with current rate every time copy is clicked
                 const pricingAltCopy = computeChargesEx({ kmRounded: akmRounded, mins: amins, FREE_KM }, window.ACTIVE_RATE_META);
                 const exAltCopy = pricingAltCopy.totalEx;
                 const incAltCopy = exAltCopy * gstFactor();
 
-                // Determine if alternates need accommodation/ferry exclusions
                 const needsAccomAlt = (outside && (akm > ACCOM_KM || amins > ACCOM_MIN));
-                const exclusionTextAlt = (needsAccomAlt || ferryAlt) ? 
+                const exclusionTextAlt = (needsAccomAlt || ferryAlt) ?
                   `\nExcludes additional charges (${needsAccomAlt ? 'accommodation' : ''}${needsAccomAlt && ferryAlt ? ', ' : ''}${ferryAlt ? 'ferry' : ''} etc).` : '';
 
                 let copyLineAlt;
                 if (window.ACTIVE_RATE_META.kind === 'tiered_time') {
-                  // ANZ/Suncorp format for alternates
                   const distanceChargeAlt = pricingAltCopy.distanceEx * gstFactor();
                   const timeChargeAlt = pricingAltCopy.timeEx * gstFactor();
                   const totalChargeAlt = pricingAltCopy.totalEx * gstFactor();
-                  
+
                   copyLineAlt =
                     `${window.ACTIVE_RATE_NAME} Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} (return) – ${akmRounded} km (each way) @ $${pricingAltCopy.kmRateApplied.toFixed(2)}/km ex GST = ${currency(distanceChargeAlt)} + ${Math.round(amins)} mins @ $${window.ACTIVE_RATE_META.timePerHour}/hr = ${currency(timeChargeAlt)}.\n` +
                     `Total Travel Charge: ${currency(totalChargeAlt)}.` +
                     `${exclusionTextAlt}`;
                 } else {
-                  // Default flat rate format for alternates
                   copyLineAlt =
                     `${window.ACTIVE_RATE_NAME} Travel charges to ${lastSearchLabel || 'Selected location'} from ${porLabelAlt} – ${akmRounded} km (each way) @ $${RATE_PER_KM.toFixed(2)}/km ex GST = ${money(incAltCopy)} inc GST (${money(exAltCopy)} ex GST) round trip.` +
                     `${exclusionTextAlt}`;
                 }
 
-                // Use the enhanced clipboard system
                 const result = await window.safeCopyToClipboard(copyLineAlt);
                 if (result.success) {
                   showToast(`Copied to clipboard: ${copyLineAlt}`, 4000);
@@ -1248,9 +1263,9 @@ function createServicePlanButton(){
           'circle-radius': 6,
           'circle-color': [
             'case',
-            ['==', ['get', 'Category'], 'ADT'], '#2563eb',          // blue for ADT
-            ['==', ['get', 'Category'], 'Subcontractor'], '#ef4444', // red for Subcontractor
-            '#2563eb' // default to blue
+            ['==', ['get', 'Category'], 'ADT'], '#2563eb',
+            ['==', ['get', 'Category'], 'Subcontractor'], '#ef4444',
+            '#2563eb'
           ],
           'circle-stroke-color': '#fff',
           'circle-stroke-width': 1
@@ -1270,7 +1285,6 @@ function createServicePlanButton(){
       map.addLayer({id:'rings-outline',type:'line',source:'rings',paint:{'line-color':'#f59e0b','line-width':2,'line-dasharray':[2,2]}});
       map.addLayer({id:'rings-fill',type:'fill',source:'rings',paint:{'fill-color':'#f59e0b','fill-opacity':0.08}});
 
-      // Initial fit to all pins (no special left padding)
       const bAll=new mapboxgl.LngLatBounds(); feats.forEach(f=>bAll.extend(f.geometry.coordinates));
       if(!bAll.isEmpty()) map.fitBounds(bAll,{padding:60});
       initialBounds = bAll;
@@ -1278,7 +1292,6 @@ function createServicePlanButton(){
       geocoder.on('result', e => {
         const center=e?.result?.center;
         const stateAbbrev=getAUStateAbbrevFromGeocoder(e?.result)||'';
-        // Build a concise label like "Suburb, STATE"
         const suburb = (e?.result?.text || '').trim();
         lastSearchLabel = suburb && stateAbbrev ? `${suburb}, ${stateAbbrev}` : (e?.result?.place_name || 'Selected location');
         if(center) showNearestFrom(center, stateAbbrev);
@@ -1293,14 +1306,12 @@ function createServicePlanButton(){
         if (map.getSource('query-point')) map.getSource('query-point').setData({type:'FeatureCollection',features:[]});
         lastSearchLabel = '';
         setStatus('Cleared.');
-        // Refit to initial full map (no left padding because panel isn't covering anything important)
         if(initialBounds && !initialBounds.isEmpty()) map.fitBounds(initialBounds,{padding:60});
       });
 
       setStatus(`Ready. Loaded <b>${feats.length}</b> PORs from <code>${CSV_URL}</code>. Search anywhere in Australia to calculate nearest and alternates.`);
     });
 
-    // Refit on window resize to respect current panel width
     window.addEventListener('resize', () => {
       if(!queryCoordGlobal || !nearestCoordGlobal) return;
       const b = new mapboxgl.LngLatBounds();
@@ -1309,7 +1320,7 @@ function createServicePlanButton(){
       try{ map.fitBounds(b, { padding: panelPadding(), maxZoom: 10 }); }catch(_e){}
     });
   }
-   
+
   main().catch(err=>{ console.error(err); setStatus(`❌ Startup error: ${err.message}`); });
 })();
 </script>
