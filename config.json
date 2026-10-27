@@ -1,6 +1,6 @@
 {
   "rates": {
-    "Standard ADT": { "type": "flat", "perKm": 2.08 },
+    "Standard ADT": { "type": "flat", "perKm": 3.00 },
 
     "ANZ/Suncorp": {
       "type": "tiered_time",
