@@ -354,12 +354,16 @@
   }
 
   // Per-POR free radius. data.csv "FreeKm" column overrides config freeKm (blank = default).
-  // The straight-line trigger and road grace scale with the radius (e.g. 50/35/15 -> 20/14/6).
+  // The straight-line trigger scales with the radius (e.g. 50/35 -> 20/14).
+  // Road grace: data.csv "GraceKm" (fixed km, 0 allowed); blank = scaled (e.g. 15 -> 6 for a 20 km POR).
   function porZone(props){
     const v = parseFloat(String(props?.FreeKm ?? '').trim());
     const freeKm = (isFinite(v) && v > 0) ? v : FREE_KM;
     const scale = FREE_KM > 0 ? freeKm / FREE_KM : 1;
-    return { freeKm, triggerKm: SL_TRIGGER_KM * scale, graceKm: GRACE_KM * scale };
+    const gRaw = String(props?.GraceKm ?? '').trim();
+    const g = parseFloat(gRaw);
+    const graceKm = (gRaw !== '' && isFinite(g) && g >= 0) ? g : GRACE_KM * scale;
+    return { freeKm, triggerKm: SL_TRIGGER_KM * scale, graceKm };
   }
   const kmLabel = n => `${Math.round(n * 10) / 10} km`;
 
@@ -471,6 +475,7 @@
     row.State = str(row.State).trim().toUpperCase();
     row.ShowCircle = row.ShowCircle ?? row.Circle50 ?? '';   // Circle50 = legacy column name
     row.FreeKm = str(row.FreeKm).trim();
+    row.GraceKm = str(row.GraceKm).trim();
     return { type:'Feature', id, geometry:{type:'Point', coordinates:[lng,lat]}, properties:row };
   }
 
